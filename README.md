@@ -32,11 +32,10 @@ on if it isn't!
 - Add the following to your `~/.config/i3/config`:
     ```commandline
     exec --no-startup-id kitti3
-    bindsym $mod+n nop kitti3_ipc
+    bindsym $mod+n nop kitti3
     ```
-    where `$mod+n` refers to your keyboard shortcut of choice (if you change this from 
-    the default remember to let Kitti3 know through the `-b` argument!). Take a look at
-    the [configuration](#configuration) below for a list of the parameters that Kitti3 accepts.
+    where `$mod+n` refers to your keyboard shortcut of choice. Take a look at the 
+    [configuration](#configuration) below for a list of the parameters that Kitti3 accepts.
     
 - Restart i3wm
 

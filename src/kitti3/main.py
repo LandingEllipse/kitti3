@@ -6,9 +6,11 @@ import i3ipc
 
 # TODO:
 #   - watch for term being sent to another display; execute fetch() on event in order to resize/position properly
-#   - make keybind matching more robust (verify mod etc)...
-#   - argparse for keybind/name/pos/size
+#   - argparse for name/pos/shape
 #   - investigate issue with on_spawn() not triggering if registered from within spawn() (delayed registration?)
+#   - nice-to-have: complain if Kitty isn't installed. exec command returns success even if `kitty` doesn't resolve, so need to find alternative way
+#   - ahem... any way to tell Kitty to change the font size when kitti3 pushes it to a low-DPI screen? or is that barking up the wrong tree if multi-DPI can be solved upstream (looking at you, randr...)
+#   - allow forwarding of args to Kitty (rip from JR --)
 
 
 class Pos(enum.Enum):
@@ -27,7 +29,6 @@ class Shape:
 
 
 CONF = {
-    "keybind": "n",
     "name": "kitti3",
     "size": Shape(minor=0.4, major=1.0),
     "pos": Pos.RIGHT,
@@ -35,14 +36,12 @@ CONF = {
 
 
 class Kitti3:
-    def __init__(self, keybind: str, name: str, size: Shape, pos: Pos):
-        self.keybind = keybind
+    def __init__(self, name: str, size: Shape, pos: Pos):
         self.name = name
         self.size = size
         self.pos = pos
 
         self.i3 = i3ipc.Connection()
-        self.set_keybind()
         self.i3.on("binding", self.on_keybind)
         self.i3.on("window::new", self.on_spawned)
         self.i3.on("shutdown::exit", self.on_shutdown_exit)
@@ -54,14 +53,8 @@ class Kitti3:
         finally:
             self.i3.main_quit()
 
-    def set_keybind(self):
-        print("binding...")
-        res = self.i3.command(f"bindsym $mod+{self.keybind} nop kitti3_ipc")
-        print(res[0].success)
-        print(res[0].error)
-
     def on_keybind(self, _, be):
-        if be.binding.input_type == "keyboard" and be.binding.symbol == self.keybind:
+        if be.binding.command == f"nop {self.name}":
             self.toggle()
 
     def toggle(self):
