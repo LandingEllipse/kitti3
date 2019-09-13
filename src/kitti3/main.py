@@ -43,6 +43,7 @@ class Kitti3:
         self.set_keybind()
         self.i3.on("binding", self.on_keybind)
         self.i3.on("window::new", self.on_spawned)
+        self.i3.on("shutdown::exit", self.on_shutdown_exit)
         # self.i3.on("window::move", self.on_moved)
 
     def loop(self):
@@ -129,6 +130,10 @@ class Kitti3:
                         f"move absolute position {x}px {y}px, "
                         "move scratchpad, "
                         "scratchpad show")
+
+    @staticmethod
+    def on_shutdown_exit(_, se):
+        exit(0)
 
 
 def cli():
