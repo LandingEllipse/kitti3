@@ -47,7 +47,10 @@ class Kitti3:
         # self.i3.on("window::move", self.on_moved)
 
     def loop(self):
-        self.i3.main()
+        try:
+            self.i3.main()
+        finally:
+            self.i3.main_quit()
 
     def set_keybind(self):
         print("binding...")
