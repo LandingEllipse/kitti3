@@ -131,6 +131,10 @@ class Kitti3:
                         "scratchpad show")
 
 
-if __name__ == "__main__":
+def cli():
     kitti3 = Kitti3(**CONF)
     kitti3.loop()
+
+
+if __name__ == "__main__":
+    cli()
