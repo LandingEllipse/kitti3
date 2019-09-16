@@ -1,23 +1,33 @@
 #!/usr/bin/env python3
 
+import sys
 import enum
+import argparse
 
 import i3ipc
 
 # TODO:
 #   - watch for term being sent to another display; execute fetch() on event in order to resize/position properly
-#   - argparse for name/pos/shape
 #   - investigate issue with on_spawn() not triggering if registered from within spawn() (delayed registration?)
 #   - nice-to-have: complain if Kitty isn't installed. exec command returns success even if `kitty` doesn't resolve, so need to find alternative way
-#   - ahem... any way to tell Kitty to change the font size when kitti3 pushes it to a low-DPI screen? or is that barking up the wrong tree if multi-DPI can be solved upstream (looking at you, randr...)
-#   - allow forwarding of args to Kitty (rip from JR --)
+#   - do verification tests of multiple instances not interfering with each other when stashing to the scratchpad
 
 
-class Pos(enum.Enum):
+class Position(enum.Enum):
     TOP = enum.auto()
     BOTTOM = enum.auto()
     LEFT = enum.auto()
     RIGHT = enum.auto()
+
+    def __str__(self):
+        return self.name.lower()
+
+    @staticmethod
+    def from_str(pos):
+        try:
+            return Position[pos.upper()]
+        except KeyError:
+            raise ValueError(f"value '{pos}' not part of the Pos enum")
 
 
 class Shape:
@@ -28,18 +38,20 @@ class Shape:
         self.major = major
 
 
-CONF = {
+DEFAULTS = {
     "name": "kitti3",
-    "size": Shape(minor=0.4, major=1.0),
-    "pos": Pos.RIGHT,
+    # "shape": Shape(minor=0.4, major=1.0),
+    "shape": (0.4, 1.0),
+    "position": str(Position.RIGHT),
 }
 
 
 class Kitti3:
-    def __init__(self, name: str, size: Shape, pos: Pos):
+    def __init__(self, name: str, shape: Shape, pos: Position, kitty_argv: list = None):
         self.name = name
-        self.size = size
+        self.shape = shape
         self.pos = pos
+        self.kitty_argv = kitty_argv
 
         self.i3 = i3ipc.Connection()
         self.i3.on("binding", self.on_keybind)
@@ -75,7 +87,14 @@ class Kitti3:
 
     def spawn(self):
         print("\tin spawn")
-        self.i3.command(f"exec --no-startup-id kitty --name {self.name}")
+        cmd_base = f"exec --no-startup-id kitty --name {self.name}"
+        if self.kitty_argv is None:
+            cmd = cmd_base
+        else:
+            argv = " ".join(self.kitty_argv)
+            cmd = f"{cmd_base} {argv}"
+        print(cmd)
+        self.i3.command(cmd)
 
     def on_spawned(self, _, we):
         if we.container.window_instance == self.name:
@@ -112,15 +131,15 @@ class Kitti3:
         if ws is None:
             ws = [w for w in self.i3.get_workspaces() if w.focused][0]
 
-        if self.pos in (Pos.TOP, Pos.BOTTOM):
-            width = round(ws.rect.width*self.size.major)
-            height = round(ws.rect.height*self.size.minor)
+        if self.pos in (Position.TOP, Position.BOTTOM):
+            width = round(ws.rect.width * self.shape.major)
+            height = round(ws.rect.height * self.shape.minor)
             x = ws.rect.x
-            y = ws.rect.y if self.pos is Pos.TOP else ws.rect.y + ws.rect.height - height
+            y = ws.rect.y if self.pos is Position.TOP else ws.rect.y + ws.rect.height - height
         else:  # LEFT || RIGHT
-            width = round(ws.rect.width*self.size.minor)
-            height = round(ws.rect.height*self.size.major)
-            x = ws.rect.x if self.pos is Pos.LEFT else ws.rect.x + ws.rect.width - width
+            width = round(ws.rect.width * self.shape.minor)
+            height = round(ws.rect.height * self.shape.major)
+            x = ws.rect.x if self.pos is Position.LEFT else ws.rect.x + ws.rect.width - width
             y = ws.rect.y
 
         self.i3.command(f"[con_id={id_}] "
@@ -134,8 +153,56 @@ class Kitti3:
         exit(0)
 
 
+def _split_args(args):
+    try:
+        split = args.index("--")
+        return args[:split], args[split + 1:]
+    except ValueError:
+        return args, None
+
+
+def _simple_fraction(arg):
+    arg = float(arg)
+    if not 0 <= arg <= 1:
+        raise argparse.ArgumentError("argument needs to be a simple fraction, within"
+                                     "[0, 1]")
+    return arg
+
+
+def _parse_args(argv, defaults):
+    ap = argparse.ArgumentParser(
+        description="Kitti3 - i3 drop-down wrapper for Kitty\n\n"
+                    "Arguments following '--' are forwarded to the Kitty instance")
+    ap.set_defaults(**defaults)
+    ap.add_argument("-n", "--name",
+                    help="name/tag connecting a Kitti3 bindsym with a Kitty instance. "
+                         "Forwarded to Kitty on spawn and scanned for on i3 binding "
+                         "events")
+    ap.add_argument("-p", "--position",
+                    type=Position.from_str,
+                    choices=list(Position),
+                    help="Along which edge of the screen to align the Kitty window")
+    ap.add_argument("-s", "--shape",
+                    type=_simple_fraction,
+                    nargs=2,
+                    help="shape of the terminal window minor and major dimensions as a "
+                         "fraction [0, 1] of the screen (note: i3bar is automatically"
+                         "excluded)")
+
+    args = ap.parse_args(argv)
+    return args
+
+
 def cli():
-    kitti3 = Kitti3(**CONF)
+    argv_kitti3, argv_kitty = _split_args(sys.argv[1:])
+    args = _parse_args(argv_kitti3, DEFAULTS)
+
+    kitti3 = Kitti3(
+        name=args.name,
+        shape=Shape(*args.shape),
+        pos=args.position,
+        kitty_argv=argv_kitty,
+    )
     kitti3.loop()
 
 
