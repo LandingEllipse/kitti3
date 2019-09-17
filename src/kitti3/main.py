@@ -6,6 +6,8 @@ import argparse
 
 import i3ipc
 
+from ._pkg_info import __version__
+
 # TODO:
 #   - watch for term being sent to another display; execute fetch() on event in order to resize/position properly
 #   - investigate issue with on_spawn() not triggering if registered from within spawn() (delayed registration?)
@@ -190,6 +192,10 @@ def _parse_args(argv, defaults):
         description="Kitti3 - i3 drop-down wrapper for Kitty\n\n"
                     "Arguments following '--' are forwarded to the Kitty instance")
     ap.set_defaults(**defaults)
+    ap.add_argument("-v", "--version",
+                    action="version",
+                    version=f"%(prog)s {__version__}",
+                    help="show %(prog)s's version number and exit")
     ap.add_argument("-n", "--name",
                     help="name/tag connecting a Kitti3 bindsym with a Kitty instance. "
                          "Forwarded to Kitty on spawn and scanned for on i3 binding "
@@ -202,7 +208,7 @@ def _parse_args(argv, defaults):
                     type=_simple_fraction,
                     nargs=2,
                     help="shape of the terminal window minor and major dimensions as a "
-                         "fraction [0, 1] of the screen (note: i3bar is automatically"
+                         "fraction [0, 1] of the screen (note: i3bar is automatically "
                          "excluded)")
 
     args = ap.parse_args(argv)
