@@ -50,6 +50,13 @@ be changed via commandline arguments:
 TODO: WIP
 ```
 
+### Multiple instances
+```commandline
+exec --no-startup-id kitti3 -n bubblegum
+bindsym $mod+n nop bubblegum
+    ```
+
+
 
 ## Dependencies
 - [Kitty](https://sw.kovidgoyal.net/kitty/) (duh)

@@ -53,6 +53,8 @@ class Kitti3:
         self.pos = pos
         self.kitty_argv = kitty_argv
 
+        self.id = None
+
         self.i3 = i3ipc.Connection()
         self.i3.on("binding", self.on_keybind)
         self.i3.on("window::new", self.on_spawned)
@@ -69,40 +71,48 @@ class Kitti3:
         if be.binding.command == f"nop {self.name}":
             self.toggle()
 
+    def _get_instance(self):
+        tree = self.i3.get_tree()
+        if self.id is None:
+            matches = tree.find_instanced(self.name)
+            instance = {m.window_instance: m for m in matches}.get(self.name, None)
+            if instance is not None:
+                self.id = instance.id
+        else:
+            instance = tree.find_by_id(self.id)
+        return instance
+
     def toggle(self):
-        named = self.i3.get_tree().find_instanced(self.name)
-        if not len(named):
+        kitty = self._get_instance()
+        if kitty is None:
             self.spawn()
         else:
-            wss = [w for w in self.i3.get_workspaces() if w.focused]
-            if not len(wss):
-                print("No focused workspaces; ignoring toggle request")
+            focused_ws = self._get_focused_workspace()
+            if focused_ws is None:
+                print("no focused workspaces; ignoring toggle request")
                 return
-            ws = wss[0]
-            id_ = named[0].id
-            if named[0].workspace().name == ws.name:  # kitty present on current WS; hide
-                self.i3.command(f"[con_id={id_}] floating enable, move scratchpad")
+            if kitty.workspace().name == focused_ws.name:  # kitty present on current WS; hide
+                self.i3.command(f"[con_id={self.id}] floating enable, move scratchpad")
             else:
-                self.fetch(id_, ws)
+                self.fetch(focused_ws)
 
     def spawn(self):
-        print("\tin spawn")
         cmd_base = f"exec --no-startup-id kitty --name {self.name}"
         if self.kitty_argv is None:
             cmd = cmd_base
         else:
             argv = " ".join(self.kitty_argv)
             cmd = f"{cmd_base} {argv}"
-        print(cmd)
         self.i3.command(cmd)
 
     def on_spawned(self, _, we):
         if we.container.window_instance == self.name:
+            self.id = we.container.id
             self.i3.command(f"[con_id={we.container.id}] "
                             "floating enable, "
                             "border none, "
                             "move scratchpad")
-            self.fetch(we.container.id)
+            self.fetch(self._get_focused_workspace())
 
     # def on_moved(self, _, we):
     #     print("\non_moved")
@@ -127,9 +137,15 @@ class Kitti3:
     #         print("\tresize to new ws")
     #         self.fetch(container.id, container.workspace())
 
-    def fetch(self, id_, ws=None):
-        if ws is None:
-            ws = [w for w in self.i3.get_workspaces() if w.focused][0]
+    def _get_focused_workspace(self):
+        focused_workspaces = [w for w in self.i3.get_workspaces() if w.focused]
+        if not len(focused_workspaces):
+            return None
+        return focused_workspaces[0]
+
+    def fetch(self, ws):
+        if self.id is None:
+            raise RuntimeError("Kitty instance ID not yet assigned")
 
         if self.pos in (Position.TOP, Position.BOTTOM):
             width = round(ws.rect.width * self.shape.major)
@@ -142,7 +158,7 @@ class Kitti3:
             x = ws.rect.x if self.pos is Position.LEFT else ws.rect.x + ws.rect.width - width
             y = ws.rect.y
 
-        self.i3.command(f"[con_id={id_}] "
+        self.i3.command(f"[con_id={self.id}] "
                         f"resize set {width}px {height}px, "
                         f"move absolute position {x}px {y}px, "
                         "move scratchpad, "
