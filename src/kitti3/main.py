@@ -6,13 +6,16 @@ import argparse
 
 import i3ipc
 
-from ._pkg_info import __version__
+try:
+    from . import __version__
+except ImportError:
+    __version__ = "N/A"
 
 # TODO:
 #   - watch for term being sent to another display; execute fetch() on event in order to resize/position properly
 #   - investigate issue with on_spawn() not triggering if registered from within spawn() (delayed registration?)
 #   - nice-to-have: complain if Kitty isn't installed. exec command returns success even if `kitty` doesn't resolve, so need to find alternative way
-#   - do verification tests of multiple instances not interfering with each other when stashing to the scratchpad
+#   - can watch for window::floating events and reposition kitty when comming out of tiled mode (though toggle fixes this and isn't much of an inconvenience?)
 
 
 class Position(enum.Enum):
@@ -42,7 +45,6 @@ class Shape:
 
 DEFAULTS = {
     "name": "kitti3",
-    # "shape": Shape(minor=0.4, major=1.0),
     "shape": (0.4, 1.0),
     "position": str(Position.RIGHT),
 }
