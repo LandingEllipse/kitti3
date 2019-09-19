@@ -35,16 +35,16 @@ class Position(enum.Enum):
 
 
 class Shape:
-    def __init__(self, minor, major):
-        if max(minor, major) > 1.0 or min(minor, major) < 0.0:
-            raise ValueError(f"Shape out of range [0,1]: minor={minor}, major={major}")
-        self.minor = minor
+    def __init__(self, major, minor):
+        if max(major, minor) > 1.0 or min(major, minor) < 0.0:
+            raise ValueError(f"Shape out of range [0,1]: major={major}, minor={minor}")
         self.major = major
+        self.minor = minor
 
 
 DEFAULTS = {
     "name": "kitti3",
-    "shape": (0.4, 1.0),
+    "shape": (1.0, 0.4),
     "position": str(Position.RIGHT),
 }
 
@@ -181,7 +181,7 @@ def _simple_fraction(arg):
 
 def _parse_args(argv, defaults):
     ap = argparse.ArgumentParser(
-        description="Kitti3 - i3 drop-down wrapper for Kitty\n\n"
+        description="Kitti3: i3 drop-down wrapper for Kitty. "
                     "Arguments following '--' are forwarded to the Kitty instance")
     ap.set_defaults(**defaults)
     ap.add_argument("-v", "--version",
@@ -199,9 +199,9 @@ def _parse_args(argv, defaults):
     ap.add_argument("-s", "--shape",
                     type=_simple_fraction,
                     nargs=2,
-                    help="shape of the terminal window minor and major dimensions as a "
-                         "fraction [0, 1] of the screen (note: i3bar is automatically "
-                         "excluded)")
+                    help="shape of the terminal window major and minor dimensions as a "
+                         "fraction [0, 1] of the screen size (note: i3bar is accounted "
+                         "for such that a 1.0 1.0 shaped terminal would not overlap it)")
 
     args = ap.parse_args(argv)
     return args
