@@ -11,11 +11,6 @@ try:
 except ImportError:
     __version__ = "N/A"
 
-# TODO:
-#   - investigate issue with on_spawn() not triggering if registered from within spawn() (delayed registration?)
-#   - nice-to-have: complain if Kitty isn't installed. exec command returns success even if `kitty` doesn't resolve, so need to find alternative way
-#   - can watch for window::floating events and reposition kitty when comming out of tiled mode (though toggle fixes this and isn't much of an inconvenience?)
-
 
 class Position(enum.Enum):
     TOP = enum.auto()
