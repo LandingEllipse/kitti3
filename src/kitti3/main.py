@@ -12,7 +12,6 @@ except ImportError:
     __version__ = "N/A"
 
 # TODO:
-#   - watch for term being sent to another display; execute fetch() on event in order to resize/position properly
 #   - investigate issue with on_spawn() not triggering if registered from within spawn() (delayed registration?)
 #   - nice-to-have: complain if Kitty isn't installed. exec command returns success even if `kitty` doesn't resolve, so need to find alternative way
 #   - can watch for window::floating events and reposition kitty when comming out of tiled mode (though toggle fixes this and isn't much of an inconvenience?)
@@ -62,8 +61,8 @@ class Kitti3:
         self.i3 = i3ipc.Connection()
         self.i3.on("binding", self.on_keybind)
         self.i3.on("window::new", self.on_spawned)
-        self.i3.on("shutdown::exit", self.on_shutdown_exit)
-        # self.i3.on("window::move", self.on_moved)
+        self.i3.on("shutdown::exit", self.on_shutdown)
+        self.i3.on("window::move", self.on_moved)
 
     def loop(self):
         try:
@@ -118,28 +117,20 @@ class Kitti3:
                             "move scratchpad")
             self.fetch(self._get_focused_workspace())
 
-    # def on_moved(self, _, we):
-    #     print("\non_moved")
-    #     print(f"\tchange: {we.change}")
-    #     container = we.container.descendants()[0]
-    #     if not container:
-    #         print("no child container; return")
-    #         return
-    #
-    #     cur_ws = [w for w in self.i3.get_workspaces() if w.focused][0]
-    #     print(f"\tcur_ws.name: {cur_ws.name}")
-    #     print(f"\tcur_ws.focused: {cur_ws.focused}")
-    #
-    #     to_ws = we.container.workspace()
-    #     if to_ws is None:
-    #         print("\tempty to_ws; return")
-    #         return
-    #     print(f"\tto_ws.name: {to_ws.name}")
-    #     print(f"\tto_ws.focused: {to_ws.focused}")
-    #
-    #     if container.window_instance == self.name:
-    #         print("\tresize to new ws")
-    #         self.fetch(container.id, container.workspace())
+    def on_moved(self, _, we):
+        # Con is floating wrapper; the Kitty window/container is a child
+        is_kitty = we.container.find_by_id(self.id)
+        if not is_kitty:
+            return
+        focused_ws = self._get_focused_workspace()
+        if focused_ws is None:
+            return
+        kitty = self._get_instance()  # need "fresh" instance to capture destination WS
+        kitty_ws = kitty.workspace()
+        if (kitty_ws is None or kitty_ws.name == focused_ws.name or
+                kitty_ws.name == "__i3_scratch"):  # FIXME: fragile way to check if hidden?
+            return
+        self.fetch(kitty_ws, retrieve=False)
 
     def _get_focused_workspace(self):
         focused_workspaces = [w for w in self.i3.get_workspaces() if w.focused]
@@ -147,7 +138,7 @@ class Kitti3:
             return None
         return focused_workspaces[0]
 
-    def fetch(self, ws):
+    def fetch(self, ws, retrieve=True):
         if self.id is None:
             raise RuntimeError("Kitty instance ID not yet assigned")
 
@@ -164,12 +155,11 @@ class Kitti3:
 
         self.i3.command(f"[con_id={self.id}] "
                         f"resize set {width}px {height}px, "
-                        f"move absolute position {x}px {y}px, "
-                        "move scratchpad, "
-                        "scratchpad show")
+                        f"move absolute position {x}px {y}px"
+                        f"{', move scratchpad, scratchpad show' if retrieve else ''}")
 
     @staticmethod
-    def on_shutdown_exit(_, se):
+    def on_shutdown(_, se):
         exit(0)
 
 

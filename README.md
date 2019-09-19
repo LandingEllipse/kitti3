@@ -17,19 +17,19 @@ into view; it just appears and disappears on demand.
 
 ## Installation and setup
 Kitti3 is a Python 3 package that [lives on PYPI](TODO). 
-- To install it, either:
-    1. use pip:
+1. To install it, either:
+    - use pip:
         ```commandline
         $ pip install kitti3 --user
         ```
-    2. or copy [main.py](https://github.com/LandingEllipse/Kitti3/blob/master/src/kitti3/main.py)
+    - or copy [main.py](https://github.com/LandingEllipse/Kitti3/blob/master/src/kitti3/main.py)
     to somewhere on your $PATH, rename it to `kitti3` and make it executable. (*Note:*
     in this case it's your responsibility satisfy the [dependencies](#dependencies)) 
 
-- Ensure that Kitti3 is reachable (e.g. `$ which kitti3`); i3 won't necessarily complain later 
+2. Ensure that Kitti3 is reachable (e.g. `$ which kitti3`); i3 won't necessarily complain later 
 on if it isn't!
 
-- Add the following to your `~/.config/i3/config`:
+3. Add the following to your `~/.config/i3/config`:
     ```commandline
     exec --no-startup-id kitti3
     bindsym $mod+n nop kitti3
@@ -37,9 +37,9 @@ on if it isn't!
     where `$mod+n` refers to your keyboard shortcut of choice. Take a look at the 
     [configuration](#configuration) below for a list of the parameters that Kitti3 accepts.
     
-- Restart i3wm
+4. Restart i3wm
 
-- Trigger the shortcut to verify that the terminal appears (slight flicker / tiling 
+5. Trigger the shortcut to verify that the terminal appears (slight flicker / tiling 
 noise is normal on the first toggle when Kitty is spawned and floated by Kitti3)
 
 
