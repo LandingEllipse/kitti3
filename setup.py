@@ -26,6 +26,7 @@ setup(
     },
     description="Kitti3 - Kitty drop down terminal service for i3wm",
     long_description=long_description,
+    long_description_content_type="text/markdown",
     url=URL,
     packages=find_packages("src"),
     package_dir={"": "src"},
