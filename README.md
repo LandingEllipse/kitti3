@@ -24,7 +24,7 @@ Kitti3 is a Python 3 package that [lives on PYPI](TODO).
         ```
     - or copy [main.py](https://github.com/LandingEllipse/Kitti3/blob/master/src/kitti3/main.py)
     to somewhere on your $PATH, rename it to `kitti3` and make it executable. (*Note:*
-    in this case it's your responsibility satisfy the [dependencies](#dependencies)) 
+    in this case it's your responsibility to satisfy the Python [dependencies](#dependencies)) 
 
 2. Ensure that Kitti3 is reachable (e.g. `$ which kitti3`); i3 won't necessarily complain later 
 on if it isn't!
@@ -47,16 +47,51 @@ noise is normal on the first toggle when Kitty is spawned and floated by Kitti3)
 Kitti3 doesn't make use of a dedicated configuration file, but the default behaviour can 
 be changed via commandline arguments:
 ```commanline
-TODO: WIP
+$ kitti3 -h
+usage: kitti3 [-h] [-v] [-n NAME] [-p {top,bottom,left,right}]
+              [-s SHAPE SHAPE]
+
+Kitti3: i3 drop-down wrapper for Kitty. Arguments following '--' are
+forwarded to the Kitty instance
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --version         show kitti3's version number and exit
+  -n NAME, --name NAME  name/tag connecting a Kitti3 bindsym with a Kitty
+                        instance. Forwarded to Kitty on spawn and scanned for
+                        on i3 binding events
+  -p {top,bottom,left,right}, --position {top,bottom,left,right}
+                        Along which edge of the screen to align the Kitty
+                        window
+  -s SHAPE SHAPE, --shape SHAPE SHAPE
+                        shape of the terminal window minor and major
+                        dimensions as a fraction [0, 1] of the screen (note:
+                        i3bar is automatically excluded)
 ```
 
 ### Multiple instances
+Kitti3 uses an *instance name* internally to associate a keyboard shortcut with a Kitty
+instance. The default name is simply "kitti3". If you want to run multiple instances of 
+Kitti3 you will need to provide subsequent instances with distinct names to prevent 
+crosstalk. For example (`~/.config/i3/config`):
 ```commandline
 exec --no-startup-id kitti3 -n bubblegum
 bindsym $mod+n nop bubblegum
-    ```
+```
+Notice how because Kitti3 piggybacks on i3's keyboard shortcut handling, the instance 
+name needs to be reflected in the `bindsym` declaration as well (even though the bindsym
+is technically a no-operation, an IPC event is still triggered and Kitti3 is able to
+parse and associate the nop comment (*bubblegum* in this case). 
 
-
+### Example
+The following i3 configuration snippet provides a Kitty terminal aligned to the left 
+side of the screen, filling the entire available height (major dimension) but limited to
+30% of the width. It is assigned the custom name "caterwaul", and the argument 
+`--session ~/.kitty_session` is forwarded to Kitty when it is spawned.
+```commandline
+exec --no-startup-id kitti3 -n caterwaul -p left -s 1.0 0.3 -- --session ~/.kitty_session
+bindsym $mod+n nop caterwaul
+```
 
 ## Dependencies
 - [Kitty](https://sw.kovidgoyal.net/kitty/) (duh)
