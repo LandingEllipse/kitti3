@@ -160,4 +160,4 @@ development mode using pip (from the project root directory):
 This exposes the `kitti3` entry point script, which starts the Kitty service.
 
 ## License
-Kitti3 is released under a BSD 3-clause license; see [LICENCE](https://github.com/LandingEllipse/Kitti3/blob/master/LICENSE) for the details.
+Kitti3 is released under a BSD 3-clause license; see [LICENSE](https://github.com/LandingEllipse/Kitti3/blob/master/LICENSE) for the details.
