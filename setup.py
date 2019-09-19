@@ -19,7 +19,7 @@ __version__ = '{{version}}'
 """
 
 setup(
-    name="Kitti3",
+    name="kitti3",
     use_scm_version={
         "write_to": "src/kitti3/_pkg_info.py",
         "write_to_template": pkg_info_template,
@@ -34,21 +34,23 @@ setup(
     author_email="arl13@aber.ac.uk",
     license="BSD 3-Clause",
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Environment :: Console",
-        # "Intended Audience :: TODO",
+        "Intended Audience :: End Users/Desktop",
         "License :: OSI Approved :: BSD 3-Clause License",
         "Natural Language :: English",
         "Operating System :: POSIX :: Linux",
+        "Environment :: X11 Applications",
         "Programming Language :: Python :: 3 :: Only",
-        # "Topic :: TODO :: TODO",
+        "Topic :: Terminals :: Terminal Emulators/X Terminals",
+        "Topic :: Desktop Environment :: Window Managers",
     ],
     keywords="drop down terminal kitty i3 i3wm quake guake",
     setup_requires=[
         "setuptools_scm>=1.7",
     ],
     install_requires=[
-        "i3ipc>=2.0.0",  # TODO: verify min version (local = 2.1.1)
+        "i3ipc>=2.0.0",
     ],
     entry_points={
         "console_scripts": [
