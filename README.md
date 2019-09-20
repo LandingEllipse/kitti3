@@ -10,13 +10,11 @@ floating terminal for the [i3 window manager](https://i3wm.org/).
 - Support for multiple instances
 - Kitty argument forwarding (e.g. `--session`)
 
-[TODO: image of kitti3]
+![Image of Kitti3](docs/assets/kitti3_screenshot.jpg)
 
-Disclaimer: no screen redraws are wasted on actually animating dropping the terminal down 
-into view; it just appears and disappears on demand.
 
 ## Installation and setup
-Kitti3 is a Python 3 package that [lives on PYPI](TODO). 
+Kitti3 is a Python 3 package that [lives on PYPI](https://pypi.org/project/kitti3/). 
 1. To install it, either:
     - use pip:
         ```commandline
