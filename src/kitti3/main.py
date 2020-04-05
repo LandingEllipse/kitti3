@@ -150,8 +150,8 @@ class Kitti3:
 
         self.i3.command(f"[con_id={self.id}] "
                         f"resize set {width}px {height}px, "
-                        f"move absolute position {x}px {y}px"
-                        f"{', move scratchpad, scratchpad show' if retrieve else ''}")
+                        f"{', move scratchpad, scratchpad show' if retrieve else ''}"
+                        f"move absolute position {x}px {y}px")
 
     @staticmethod
     def on_shutdown(_, se):
