@@ -29,13 +29,13 @@ on if it isn't!
 
 3. Add the following to your `~/.config/i3/config`:
     ```commandline
-    exec --no-startup-id kitti3
+    exec_always --no-startup-id kitti3
     bindsym $mod+n nop kitti3
     ```
     where `$mod+n` refers to your keyboard shortcut of choice. Take a look at the 
     [configuration](#configuration) below for a list of the parameters that Kitti3 accepts.
     
-4. Restart i3wm
+4. Restart i3wm inplace (e.g. `$mod+Shift+r`)
 
 5. Trigger the shortcut to verify that the terminal appears (slight flicker / tiling 
 noise is normal on the first toggle when Kitty is spawned and floated by Kitti3)
@@ -73,7 +73,7 @@ instance. The default name is simply "kitti3". If you want to run multiple insta
 Kitti3 you will need to provide subsequent instances with distinct names to prevent 
 crosstalk. For example (`~/.config/i3/config`):
 ```commandline
-exec --no-startup-id kitti3 -n bubblegum
+exec_always --no-startup-id kitti3 -n bubblegum
 bindsym $mod+n nop bubblegum
 ```
 Notice how because Kitti3 piggybacks on i3's keyboard shortcut handling, the instance 
@@ -87,9 +87,16 @@ side of the screen, filling the entire available height (major dimension) but li
 30% of the width. It is assigned the custom name "caterwaul", and the argument 
 `--session ~/.kitty_session` is forwarded to Kitty when it is spawned.
 ```commandline
-exec --no-startup-id kitti3 -n caterwaul -p left -s 1.0 0.3 -- --session ~/.kitty_session
+exec_always --no-startup-id kitti3 -n caterwaul -p left -s 1.0 0.3 -- --session ~/.kitty_session
 bindsym $mod+n nop caterwaul
 ```
+
+### Updating the configuration
+Kitti3 must be respawned to trigger any changes made to its command line arguments in the
+i3wm config file. This can most easily be achieved by restarting i3wm inplace (e.g. 
+`$mod+Shift+r`), which because of the use of `exec_always` will spawn a new instance
+of kitti3. The old instance will automatically exit when it detects a restart event, so
+you should not see any stray instances remaining.
 
 ## Dependencies
 - [Kitty](https://sw.kovidgoyal.net/kitty/) (duh)
