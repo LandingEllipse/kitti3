@@ -13,34 +13,54 @@ except ImportError:
 
 
 class Position(enum.Enum):
-    TOP = enum.auto()
-    BOTTOM = enum.auto()
-    LEFT = enum.auto()
-    RIGHT = enum.auto()
+    LT = TL = LEFT = TOP = enum.auto()
+    LC = CL = enum.auto()
+    LB = BL = BOTTOM = enum.auto()
+    CT = TC = enum.auto()
+    CC = enum.auto()
+    CB = BC = enum.auto()
+    RT = TR = RIGHT = enum.auto()
+    RC = CR = enum.auto()
+    RB = BR = enum.auto()
+
+    def __init__(self, _):
+        self.compat: bool = False
 
     def __str__(self):
         return self.name.lower()
 
-    @staticmethod
-    def from_str(pos):
+    @classmethod
+    def from_str(cls, val):
         try:
-            return Position[pos.upper()]
+            pos = cls[val.upper()]
         except KeyError:
-            raise ValueError(f"value '{pos}' not part of the Pos enum")
+            raise ValueError(f"'{val}' is not a valid position") from None
+        if val.upper() in ("LEFT", "RIGHT"):
+            pos.compat = True
+        print(pos)
+        return pos
+
+    @property
+    def x(self):
+        return self.name[0]
+
+    @property
+    def y(self):
+        return self.name[1]
 
 
 class Shape:
-    def __init__(self, major, minor):
-        if max(major, minor) > 1.0 or min(major, minor) < 0.0:
-            raise ValueError(f"Shape out of range [0,1]: major={major}, minor={minor}")
-        self.major = major
-        self.minor = minor
+    def __init__(self, x, y):
+        if max(x, y) > 1.0 or min(x, y) < 0.0:
+            raise ValueError(f"shape out of range [0,1]: x={x}, y={y}")
+        self.x = x
+        self.y = y
 
 
 DEFAULTS = {
     "name": "kitti3",
     "shape": (1.0, 0.4),
-    "position": str(Position.RIGHT),
+    "position": "RIGHT",
 }
 
 
@@ -137,21 +157,23 @@ class Kitti3:
         if self.id is None:
             raise RuntimeError("Kitty instance ID not yet assigned")
 
-        if self.pos in (Position.TOP, Position.BOTTOM):
-            width = round(ws.rect.width * self.shape.major)
-            height = round(ws.rect.height * self.shape.minor)
-            x = ws.rect.x
-            y = ws.rect.y if self.pos is Position.TOP else ws.rect.y + ws.rect.height - height
-        else:  # LEFT || RIGHT
-            width = round(ws.rect.width * self.shape.minor)
-            height = round(ws.rect.height * self.shape.major)
-            x = ws.rect.x if self.pos is Position.LEFT else ws.rect.x + ws.rect.width - width
-            y = ws.rect.y
+        width = round(ws.rect.width * self.shape.x)
+        height = round(ws.rect.height * self.shape.y)
+        x = {
+            "L": ws.rect.x,
+            "C": ws.rect.x + round((ws.rect.width / 2) - (width / 2)),
+            "R": ws.rect.x + ws.rect.width - width,
+        }[self.pos.x]
+        y = {
+            "T": ws.rect.y,
+            "C": ws.rect.y + round((ws.rect.height / 2) - (height / 2)),
+            "B": ws.rect.y + ws.rect.height - height,
+        }[self.pos.y]
 
-        self.i3.command(f"[con_id={self.id}] "
-                        f"resize set {width}px {height}px, "
-                        f"{', move scratchpad, scratchpad show' if retrieve else ''}"
-                        f"move absolute position {x}px {y}px")
+        self.i3.command(f"[con_id={self.id}]"
+                        f" resize set {width}px {height}px,"
+                        f"{' move scratchpad, scratchpad show,' if retrieve else ''}"
+                        f" move absolute position {x}px {y}px")
 
     @staticmethod
     def on_shutdown(_, se):
@@ -176,29 +198,39 @@ def _simple_fraction(arg):
 
 def _parse_args(argv, defaults):
     ap = argparse.ArgumentParser(
-        description="Kitti3: i3 drop-down wrapper for Kitty. "
-                    "Arguments following '--' are forwarded to the Kitty instance")
+        description="Kitti3: i3 drop-down wrapper for Kitty."
+                    " Arguments following '--' are forwarded to the Kitty instance")
     ap.set_defaults(**defaults)
+    ap.add_argument("-n", "--name",
+                    help="name/tag used to identify this Kitti3 instance. Must match"
+                         " the keybinding used in the i3wm config (e.g."
+                         " `bindsym $mod+n nop NAME`)")
+    ap.add_argument("-p", "--position",
+                    type=Position.from_str,
+                    choices=list(Position),
+                    help="where to align the origin of the Kitty window within the"
+                         " active workspace, e.g. TL for Top Left, or BC for Bottom"
+                         " Center (character order does not matter)")
+    ap.add_argument("-s", "--shape",
+                    type=_simple_fraction,
+                    nargs=2,
+                    help="shape of the Kitty window (x, y) dimensions as fractions"
+                         " in [0, 1] of the workspace size, e.g. 1.0 0.5 for full"
+                         " width, half height. Note: for backwards compatibility, if"
+                         " POSITION is `left` or `right` (default), the coordinate "
+                         "order is reversed")
     ap.add_argument("-v", "--version",
                     action="version",
                     version=f"%(prog)s {__version__}",
                     help="show %(prog)s's version number and exit")
-    ap.add_argument("-n", "--name",
-                    help="name/tag connecting a Kitti3 bindsym with a Kitty instance. "
-                         "Forwarded to Kitty on spawn and scanned for on i3 binding "
-                         "events")
-    ap.add_argument("-p", "--position",
-                    type=Position.from_str,
-                    choices=list(Position),
-                    help="Along which edge of the screen to align the Kitty window")
-    ap.add_argument("-s", "--shape",
-                    type=_simple_fraction,
-                    nargs=2,
-                    help="shape of the terminal window major and minor dimensions as a "
-                         "fraction [0, 1] of the screen size (note: i3bar is accounted "
-                         "for such that a 1.0 1.0 shaped terminal would not overlap it)")
 
     args = ap.parse_args(argv)
+
+    if args.position.compat:
+        args.shape = Shape(*reversed(args.shape))
+    else:
+        args.shape = Shape(*args.shape)
+
     return args
 
 
@@ -208,7 +240,7 @@ def cli():
 
     kitti3 = Kitti3(
         name=args.name,
-        shape=Shape(*args.shape),
+        shape=args.shape,
         pos=args.position,
         kitty_argv=argv_kitty,
     )
