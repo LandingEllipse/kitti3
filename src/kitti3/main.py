@@ -78,6 +78,7 @@ class Kitti3:
         self.i3 = i3ipc.Connection()
         self.i3.on("binding", self.on_keybind)
         self.i3.on("window::new", self.on_spawned)
+        self.i3.on("window::floating", self.on_floated)
         self.i3.on("window::move", self.on_moved)
         self.i3.on("shutdown::exit", self.on_shutdown)
 
@@ -92,15 +93,13 @@ class Kitti3:
         """Toggle the visibility of Kitti3's Kitty instance when the appropriate keybind
         command is triggered by the user.
 
-        Hide the Kitty instance if it is present on the focused workspace, otherwise
-        fetch it from its current workspace (scratchpad or regular). Spawn a new
-        instance if one does not already exist.
+        Hide the Kitty window if it is present on the focused workspace, otherwise
+        fetch it from its current workspace (scratchpad or regular). Spawn a new Kitty
+        instance if one does not presently exist.
         """
         if be.binding.command != f"nop {self.name}":
             return
-
         self.refresh()
-
         if self.id is None:
             self.spawn()
         elif self.kitty_ws.name == self.focused_ws.name:
@@ -109,18 +108,35 @@ class Kitti3:
             self.align_to_ws(fetch=True)
 
     def on_spawned(self, _, we: i3ipc.WindowEvent) -> None:
-        """Float and align the Kitty window once it has been created."""
+        """Float the Kitty window once it has settled after spawning.
+
+        The act of floating will trigger `on_floated()`, which will take care of
+        alignment.
+        """
         if we.container.window_instance != self.name:
             return
         self.id = we.container.id
         self.refresh()
         self.i3.command(
-            f"[con_id={self.id}] floating enable, border none, move scratchpad"
+            f"[con_id={self.id}] floating enable, border none"
         )
-        self.align_to_ws(fetch=True)
+
+    def on_floated(self, _, we: i3ipc.WindowEvent) -> None:
+        """Ensure that the Kitty window is aligned to its workspace when transitioning
+        from tiled to floated.
+        """
+        if not (we.container.floating == "user_on" and we.container.id == self.id):
+            return
+        self.refresh()
+        # avoid aligning after a move to the scratchpad (can happen if Kitty is tiled
+        # and subsequently has its visibility toggled, as it will be floated and moved
+        # in a single operation before the floating event is triggered)
+        if self.kitty_ws.name == "__i3_scratch":
+            return
+        self.align_to_ws(fetch=False)
 
     def on_moved(self, _, we: i3ipc.WindowEvent) -> None:
-        """Ensure that the Kitty window is positioned and resized if moved to a
+        """Ensure that the Kitty window is positioned and resized when moved to a
         different sized workspace (e.g. on a different monitor).
 
         If Kitty has been manually tiled by the user it will not be re-floated.
@@ -144,8 +160,7 @@ class Kitti3:
         exit(0)
 
     def spawn(self) -> None:
-        """Spawn a new Kitty instance identified by the name given to this instance of
-        Kitti3.
+        """Spawn a new Kitty window associated with the name of this Kitti3 instance.
         """
         cmd_base = f"exec --no-startup-id kitty --name {self.name}"
         if self.kitty_argv is None:
@@ -160,12 +175,15 @@ class Kitti3:
 
         If `fetch` is True, Kitty will be moved from its current workspace to the
         focused workspace via the scratchpad (where it might already reside).
+
+        TODO:
+            - We can skip alignment if src and dest WSs are on the same output, and
+              kitty has not gone from tiled to floating (i.e. this method was not called
+              from `on_float()`). However, it's probably not worth the hassle to track.
         """
         if self.id is None:
             raise RuntimeError("internal error: Kitty instance ID not yet assigned")
-
         ws = self.focused_ws if fetch else self.kitty_ws
-
         width = round(ws.rect.width * self.shape.x)
         height = round(ws.rect.height * self.shape.y)
         x = {
@@ -178,7 +196,6 @@ class Kitti3:
             "C": ws.rect.y + round((ws.rect.height / 2) - (height / 2)),
             "B": ws.rect.y + ws.rect.height - height,
         }[self.pos.y]
-
         self.i3.command(
             f"[con_id={self.id}] resize set {width}px {height}px,"
             f"{' move scratchpad, scratchpad show,' if fetch else ''}"
@@ -186,8 +203,8 @@ class Kitti3:
         )
 
     def refresh(self) -> None:
-        """Update the information on the presence of the Kitty instance, its workspace
-        and the focused workspace.
+        """Update the information on the presence of the associated Kitty instance,
+        its workspace and the focused workspace.
         """
         tree = self.i3.get_tree()
         if self.id is None:
@@ -206,7 +223,6 @@ class Kitti3:
             except AttributeError:
                 self.id = None
                 self.kitty_ws = None
-
         # WS refs from get_tree() are stubs with no focus info, so have to perform a
         # second query
         for ws in self.i3.get_workspaces():
@@ -293,7 +309,6 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
 def cli() -> None:
     argv_kitti3, argv_kitty = _split_args(sys.argv[1:])
     args = _parse_args(argv_kitti3, DEFAULTS)
-
     kitti3 = Kitti3(
         name=args.name,
         shape=args.shape,
