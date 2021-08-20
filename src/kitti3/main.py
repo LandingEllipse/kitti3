@@ -13,6 +13,13 @@ except ImportError:
     __version__ = "N/A"
 
 
+DEFAULTS = {
+    "name": "kitti3",
+    "shape": (1.0, 0.4),
+    "position": "RIGHT",
+}
+
+
 class Position(enum.Enum):
     LT = TL = LEFT = TOP = enum.auto()
     LC = CL = enum.auto()
@@ -57,13 +64,6 @@ class Shape:
         self.y = y
 
 
-DEFAULTS = {
-    "name": "kitti3",
-    "shape": (1.0, 0.4),
-    "position": "RIGHT",
-}
-
-
 class Kitti3:
     def __init__(self, name: str, shape: Shape, pos: Position, kitty_argv: list = None):
         self.name = name
@@ -72,11 +72,13 @@ class Kitti3:
         self.kitty_argv = kitty_argv
 
         self.id = None
+        self.kitty_ws = None
+        self.focused_ws = None
 
         self.i3 = i3ipc.Connection()
         self.i3.on("binding", self.on_keybind)
-        self.i3.on("window::move", self.on_moved)
         self.i3.on("window::new", self.on_spawned)
+        self.i3.on("window::move", self.on_moved)
         self.i3.on("shutdown::exit", self.on_shutdown)
 
     def loop(self) -> None:
@@ -89,28 +91,57 @@ class Kitti3:
     def on_keybind(self, _, be: i3ipc.BindingEvent) -> None:
         """Toggle the visibility of Kitti3's Kitty instance when the appropriate keybind
         command is triggered by the user.
-        """
-        if be.binding.command == f"nop {self.name}":
-            self.toggle()
 
-    def toggle(self) -> None:
-        """Hide the Kitty instance if it is present on the focused workspace, otherwise
+        Hide the Kitty instance if it is present on the focused workspace, otherwise
         fetch it from its current workspace (scratchpad or regular). Spawn a new
         instance if one does not already exist.
         """
-        kitty = self._get_instance()
-        if kitty is None:
+        if be.binding.command != f"nop {self.name}":
+            return
+
+        self.refresh()
+
+        if self.id is None:
             self.spawn()
-            # will eventually fetch() via on_spawned()
-            return
-        focused_ws = self._get_focused_workspace()
-        if focused_ws is None:
-            # Unable to determine a potential destination; give up
-            return
-        if kitty.workspace().name == focused_ws.name:
+        elif self.kitty_ws.name == self.focused_ws.name:
             self.i3.command(f"[con_id={self.id}] floating enable, move scratchpad")
         else:
-            self.fetch(focused_ws)
+            self.align_to_ws(fetch=True)
+
+    def on_spawned(self, _, we: i3ipc.WindowEvent) -> None:
+        """Float and align the Kitty window once it has been created."""
+        if we.container.window_instance != self.name:
+            return
+        self.id = we.container.id
+        self.refresh()
+        self.i3.command(
+            f"[con_id={self.id}] floating enable, border none, move scratchpad"
+        )
+        self.align_to_ws(fetch=True)
+
+    def on_moved(self, _, we: i3ipc.WindowEvent) -> None:
+        """Ensure that the Kitty window is positioned and resized if moved to a
+        different sized workspace (e.g. on a different monitor).
+
+        If Kitty has been manually tiled by the user it will not be re-floated.
+        """
+        if not (
+            we.container.type == "floating_con" and we.container.find_by_id(self.id)
+        ):
+            return
+        self.refresh()
+        if (
+            # avoid double-triggering after a fetch from the scratchpad
+            self.kitty_ws.name == self.focused_ws.name
+            # avoid aligning after a move to the scratchpad
+            or self.kitty_ws.name == "__i3_scratch"
+        ):
+            return
+        self.align_to_ws(fetch=False)
+
+    @staticmethod
+    def on_shutdown(_, se: i3ipc.ShutdownEvent):
+        exit(0)
 
     def spawn(self) -> None:
         """Spawn a new Kitty instance identified by the name given to this instance of
@@ -124,14 +155,16 @@ class Kitti3:
             cmd = f"{cmd_base} {argv}"
         self.i3.command(cmd)
 
-    def fetch(self, ws: i3ipc.WorkspaceReply, cycle: bool = True) -> None:
+    def align_to_ws(self, fetch: bool = True) -> None:
         """Adapt the dimensions and location of Kitty's window to the `ws` workspace.
 
-        If `cycle` is True, Kitty will be moved from its current workspace to the
-        focused workspace.
+        If `fetch` is True, Kitty will be moved from its current workspace to the
+        focused workspace via the scratchpad (where it might already reside).
         """
         if self.id is None:
-            raise RuntimeError("Kitty instance ID not yet assigned")
+            raise RuntimeError("internal error: Kitty instance ID not yet assigned")
+
+        ws = self.focused_ws if fetch else self.kitty_ws
 
         width = round(ws.rect.width * self.shape.x)
         height = round(ws.rect.height * self.shape.y)
@@ -148,67 +181,40 @@ class Kitti3:
 
         self.i3.command(
             f"[con_id={self.id}] resize set {width}px {height}px,"
-            f"{' move scratchpad, scratchpad show,' if cycle else ''}"
+            f"{' move scratchpad, scratchpad show,' if fetch else ''}"
             f" move absolute position {x}px {y}px"
         )
 
-    def on_spawned(self, _, we: i3ipc.WindowEvent) -> None:
-        """Float and hide Kitty once its window has settled."""
-        if we.container.window_instance != self.name:
-            return
-        self.id = we.container.id
-        self.i3.command(
-            f"[con_id={we.container.id}] floating enable, border none, move scratchpad"
-        )
-        focused_ws = self._get_focused_workspace()
-        if focused_ws is None:
-            return
-        self.fetch(focused_ws)
-
-    def on_moved(self, _, we: i3ipc.WindowEvent) -> None:
-        """Ensure the Kitty window is resized if moved between workspaces with different
-        resolutions (e.g. different monitors).
-
-        If Kitty has been manually tiled by the user it will not be re-floated.
+    def refresh(self) -> None:
+        """Update the information on the presence of the Kitty instance, its workspace
+        and the focused workspace.
         """
-        if not (
-            we.container.type == "floating_con" and we.container.find_by_id(self.id)
-        ):
-            return
-        focused_ws = self._get_focused_workspace()
-        if focused_ws is None:
-            return
-        # The WE only provides a subtree down from the moved container, so to get the WS
-        # Kitty has been moved to we have to perform a separate query.
-        kitty_ws = self._get_instance().workspace()
-        if (
-            kitty_ws is None
-            or kitty_ws.name == focused_ws.name
-            or kitty_ws.name == "__i3_scratch"
-        ):
-            return
-        self.fetch(kitty_ws, cycle=False)
+        tree = self.i3.get_tree()
+        if self.id is None:
+            try:
+                # If multiple instances are found, we have no better strategy than to
+                # pick the first one
+                kitty = tree.find_instanced(self.name)[0]
+                self.id = kitty.id
+                self.kitty_ws = kitty.workspace()
+            except IndexError:
+                self.kitty_ws = None
+        else:
+            try:
+                self.kitty_ws = tree.find_by_id(self.id).workspace()
+            # The Kitty instance has despawned since the last refresh
+            except AttributeError:
+                self.id = None
+                self.kitty_ws = None
 
-    def _get_focused_workspace(self) -> Optional[i3ipc.WorkspaceReply]:
+        # WS refs from get_tree() are stubs with no focus info, so have to perform a
+        # second query
         for ws in self.i3.get_workspaces():
             if ws.focused:
-                return ws
-        return None
-
-    def _get_instance(self) -> Optional[i3ipc.Con]:
-        tree = self.i3.get_tree()
-        if self.id is not None:
-            return tree.find_by_id(self.id)
-        instances = tree.find_instanced(self.name)
-        if not len(instances):
-            return None
-        # Ignore the case where len(instances) > 1, as we can't make an informed choice
-        self.id = instances[0].id
-        return instances[0]
-
-    @staticmethod
-    def on_shutdown(_, se: i3ipc.ShutdownEvent):
-        exit(0)
+                self.focused_ws = ws
+                break
+        else:
+            self.focused_ws = None
 
 
 def _split_args(args: List[str]) -> Tuple[List, Optional[List]]:
