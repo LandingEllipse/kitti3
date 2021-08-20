@@ -283,7 +283,7 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         nargs=2,
         help=(
             "dimensions (x, y) of the Kitty window, each as a fraction of the workspace"
-            " size, e.g. 1.0 0.5 for full width, half height. Note: for backwards"
+            " size, e.g. '1.0 0.5' for full width, half height. Note: for backwards"
             " compatibility, if POSITION is 'left' or 'right' (default), the dimensions"
             " are reversed (y, x)"
         ),

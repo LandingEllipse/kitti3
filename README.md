@@ -68,10 +68,8 @@ optional arguments:
                         Center (character order does not matter)
   -s SHAPE SHAPE, --shape SHAPE SHAPE
                         dimensions (x, y) of the Kitty window, each as a
-                        fraction of the workspace size, e.g. 1.0 0.5 for full
-                        width, half height. Note: for backwards compatibility,
-                        if POSITION is 'left' or 'right' (default), the
-                        dimensions are reversed (y, x)
+                        fraction of the workspace size, e.g. '1.0 0.5' for
+                        full width, half height 
   -v, --version         show kitti3's version number and exit
 ```
 ### Command line options
@@ -79,13 +77,13 @@ optional arguments:
 The name option provides the string identifier used to connect a user-defined i3wm 
 keybinding to the Kitti3 instance. Specifically, Kitti3 will listen to i3wm IPC events
 and toggle the visibility of Kitty when it encounters the bindsym command `nop NAME` - 
-hence the requirement to include a "no-op" bindsym declaration in your config.
+hence the requirement to include a "no-op" bindsym declaration in your i3wm config.
 
 The name option value is also used internally to associate Kitti3 with the Kitty 
 instance it manages (the latter is forwarded the argument `--name NAME`). For this
 reason it is worth ensuring that an instance name is chosen which is unlikely to collide
-with that of another application's window; maybe best to avoid the likes of `slack` or 
-`discord`.
+with that of another application's window; it would be wise to avoid the likes of 
+`slack` or `discord`.
 
 #### `-p, --position` (default: `RT`)
 The position option accepts a 2-char ID, which sets the Kitty window's location within 
@@ -135,7 +133,7 @@ Note that any arguments following `--` are ignored by Kitti3 and forwarded to th
 terminal when it is spawned.
 
 #### Multiple instances
-Multiple Kitti3 instances (and hence Kitty instances) can be run concurrently; they just
+Multiple Kitti3 instances (and hence Kitty windows) can be run concurrently; they just
 need to be distinguished by unique instance names to avoid crosstalk, e.g.:
 ```commandline
 exec_always --no-startup-id kitti3 -n almond -p CT -s 0.5 0.25
