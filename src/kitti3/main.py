@@ -301,7 +301,7 @@ def _simple_fraction(arg: str) -> float:
 def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description=(
-            "Kitti3: i3wm drop-down manager for Kitty. Arguments following '--' are"
+            "Kitti3: i3/Sway drop-down manager for Kitty. Arguments following '--' are"
             " forwarded to the Kitty instance"
         )
     )
@@ -311,7 +311,7 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         "--name",
         help=(
             "name/tag used to identify this Kitti3 instance. Must match the keybinding"
-            " used in the i3wm config (e.g. `bindsym $mod+n nop NAME`)"
+            " used in the i3/Sway config (e.g. `bindsym $mod+n nop NAME`)"
         ),
     )
     ap.add_argument(
