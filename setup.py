@@ -55,7 +55,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "kitti3=kitti3.main:cli",
+            "kitti3=kitti3.cli:cli",
         ],
     },
     python_requires=">=3.6",
