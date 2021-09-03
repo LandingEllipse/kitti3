@@ -1,4 +1,5 @@
 import argparse
+import logging
 import sys
 from typing import Iterable, List, Optional, Tuple
 
@@ -160,6 +161,12 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         metavar="",
     )
     ap.add_argument(
+        "--debug",
+        action="store_true",
+        help="enable diagnostic messages",
+    )
+
+    ap.add_argument(
         "--list-clients",
         action=_ListClientsAction,
         help="list Kitti3's known clients and their command expressions",
@@ -202,6 +209,17 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
 def cli() -> None:
     argv_kitti3, argv_client = _split_args(sys.argv[1:])
     args = _parse_args(argv_kitti3, DEFAULTS)
+
+    if args.debug:
+        logging.basicConfig(
+            datefmt="%Y-%m-%dT%H:%M:%S",
+            format=(
+                "%(asctime)s.%(msecs)03dZ %(levelname)-7s"
+                " %(filename) 4s:%(lineno)03d"
+                " %(name)s.%(funcName)-12s %(message)s"
+            ),
+            level=logging.DEBUG,
+        )
 
     # FIXME: half-baked way of checking what WM we're running on.
     conn = i3ipc.Connection()

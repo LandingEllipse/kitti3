@@ -1,5 +1,6 @@
 import enum
 import functools
+import logging
 import time
 from typing import List, Optional
 
@@ -8,7 +9,7 @@ import i3ipc
 from .util import Client, Position, Rect, Shape
 
 
-class _Trigger(enum.Enum):
+class Event(enum.Enum):
     KEYBIND = enum.auto()
     SPAWNED = enum.auto()
     FLOATED = enum.auto()
@@ -32,6 +33,7 @@ class Kitt:
         self.client = client
         self.client_argv = client_argv
 
+        self._log = logging.getLogger(self.__class__.__name__)
         self.con_id: Optional[int] = None
         self.con_ws: Optional[i3ipc.WorkspaceReply] = None
         self.focused_ws: Optional[i3ipc.WorkspaceReply] = None
@@ -59,13 +61,16 @@ class Kitt:
         """
         if be.binding.command != f"nop {self.name}":
             return
+        self._log.debug("%s", be.binding.command)
         self._refresh()
         if self.con_id is None:
             self.spawn()
         elif self.con_ws.name == self.focused_ws.name:
-            self.i3.command(f"[con_id={self.con_id}] floating enable, move scratchpad")
+            cmd = f"[con_id={self.con_id}] floating enable, move scratchpad"
+            self._log.debug("%s", cmd)
+            self.i3.command(cmd)
         else:
-            self.align_to_ws(_Trigger.KEYBIND)
+            self.align_to_ws(Event.KEYBIND)
 
     def on_spawned(self, _, we: i3ipc.WindowEvent) -> None:
         """Float the client window once it has settled after spawning.
@@ -76,9 +81,10 @@ class Kitt:
         con = we.container
         if getattr(con, self.client.cattr.value) != self.name:
             return
+        self._log.debug("matched %s", con.id)
         self.con_id = con.id
         self._refresh()
-        self.align_to_ws(_Trigger.SPAWNED)
+        self.align_to_ws(Event.SPAWNED)
 
     def on_floated(self, _, we: i3ipc.WindowEvent) -> None:
         """Ensure that the client window is aligned to its workspace when transitioning
@@ -93,10 +99,13 @@ class Kitt:
         ):
             return
         self._refresh()
-        # despawn guard + toggle-while-tiled trigger repression
-        if self.con_ws is None or self.con_ws.name == "__i3_scratch":
+        if self.con_ws is None:
+            self._log.warning("despawn guard tripped: client workspace is None")
             return
-        self.align_to_ws(_Trigger.FLOATED)
+        # toggle-while-tiled trigger repression
+        elif self.con_ws.name == "__i3_scratch":
+            return
+        self.align_to_ws(Event.FLOATED)
 
     def on_moved(self, _, we: i3ipc.WindowEvent) -> None:
         """Ensure that the client window is positioned and resized when moved to a
@@ -113,28 +122,31 @@ class Kitt:
         ):
             return
         self._refresh()
-        if (
-            # deswpawn guard (sway)
-            None in (self.con_ws, self.focused_ws)
+        if self.con_ws is None:
+            self._log.warning("despawn guard tripped: client workspace is None")
+            return
+        elif (
             # avoid double-triggering
-            or self.con_ws.name == self.focused_ws.name
+            self.con_ws.name == getattr(self.focused_ws, "name", "")
             # avoid triggering on a move to the scratchpad
             or self.con_ws.name == "__i3_scratch"
         ):
             return
-        self.align_to_ws(_Trigger.MOVED)
+        self.align_to_ws(Event.MOVED)
 
-    @staticmethod
-    def on_shutdown(_, se: i3ipc.ShutdownEvent):
+    def on_shutdown(self, _, se: i3ipc.ShutdownEvent):
+        self._log.debug("received IPC shutdown command; exiting...")
         exit(0)
 
     def spawn(self) -> None:
         """Spawn a new client window associated with the name of this Kitti3 instance."""
         if self.client.cmd is None:
+            self._log.warning("unable to comply; spawning is disabled")
             return
         cmd = f"exec {self.client.cmd.format(self._escape(self.name))}"
         if self.client_argv:
             cmd = f"{cmd} {' '.join(self.client_argv)}"
+        self._log.debug("%s", cmd)
         self.i3.command(cmd)
 
     @functools.lru_cache()
@@ -206,7 +218,14 @@ class Kitt:
         else:
             self.focused_ws = None
 
-    def align_to_ws(self, context: _Trigger) -> None:
+        self._log.debug(
+            "con_id: %s, con_ws: %s, focused_ws: %s",
+            self.con_id,
+            getattr(self.con_ws, "name", None),
+            getattr(self.focused_ws, "name", None),
+        )
+
+    def align_to_ws(self, context: Event) -> None:
         raise NotImplementedError
 
 
@@ -216,7 +235,7 @@ class Kitts(Kitt):
         self.sway_timing_compat = True  # TODO: add as arg
 
     def on_moved(self, _, we: i3ipc.WindowEvent) -> None:
-        # Currently under Sway, if a container on an inactive workspace is resized, it
+        # Currently under Sway, if a container on an inactive workspace is moved, it
         # is forcibly reparented to its output's active workspace. Therefore, this
         # feature is diabled, pending https://github.com/swaywm/sway/issues/6465 .
         return
@@ -224,47 +243,52 @@ class Kitts(Kitt):
     def spawn(self) -> None:
         r = self.con_rect()
         self.i3.command(
-            f"for_window [{self.client.cattr}={self._escape(self.name)}] 'floating enable,"
-            f" border none, resize set {r.w}ppt {r.h}ppt, move position {r.x}ppt"
-            f" {r.y}ppt'"
+            f"for_window [{self.client.cattr}={self._escape(self.name)}] 'floating"
+            f" enable, border none, resize set {r.w}ppt {r.h}ppt, move position"
+            f" {r.x}ppt {r.y}ppt'"
         )
         super().spawn()
 
-    def align_to_ws(self, context: _Trigger) -> None:
-        if context == _Trigger.SPAWNED:
+    def align_to_ws(self, trigger: Event) -> None:
+        if trigger == Event.SPAWNED:
             return
-        if context == _Trigger.FLOATED and self.sway_timing_compat:
+        if trigger == Event.FLOATED and self.sway_timing_compat:
             time.sleep(0.02)
+        self._log.debug(trigger)
         r = self.con_rect()
         crit = f"[con_id={self.con_id}]"
         resize = f"resize set {r.w}ppt {r.h}ppt"
         move = f"move position {r.x}ppt {r.y}ppt"
-        if context == _Trigger.KEYBIND:
+        if trigger == Event.KEYBIND:
             fetch = f"move container to workspace {self.focused_ws.name}"
             cmd = f"{crit} {fetch}, {resize}, {move}, focus"
         else:
             cmd = f"{crit} {resize}, {move}"
+        self._log.debug(cmd)
         ret = self.i3.command(cmd)
+        self._log.debug("%s", [s or e for s, e in [(r.success, r.error) for r in ret]])
 
 
 class Kitti3(Kitt):
-    def align_to_ws(self, context: _Trigger) -> None:
+    def align_to_ws(self, context: Event) -> None:
         # Under i3, in multi-output configurations, a ppt move is considered relative
         # to the rect defined by the bounding box of all outputs, not by the con's
         # workspace. Yes, this is madness, and so we have to do absolute moves (and
         # therefore we also do absolute resizes to stay consistent).
-        if context == _Trigger.SPAWNED:
+        if context == Event.SPAWNED:
             # floating will trigger on_floated to do the actual alignment
             self.i3.command(f"[con_id={self.con_id}] floating enable, border none")
             return
-        ws = self.focused_ws if context == _Trigger.KEYBIND else self.con_ws
+        ws = self.focused_ws if context == Event.KEYBIND else self.con_ws
         r = self.con_rect(Rect.from_i3ipc(ws.rect))
         crit = f"[con_id={self.con_id}]"
         resize = f"resize set {r.w}px {r.h}px"
         move = f"move absolute position {r.x}px {r.y}px"
-        if context == _Trigger.KEYBIND:
+        if context == Event.KEYBIND:
             fetch = f"move container to workspace {ws.name}"
             cmd = f"{crit} {fetch}, {resize}, {move}, focus"
         else:
             cmd = f"{crit} {resize}, {move}"
+        self._log.debug(cmd)
         ret = self.i3.command(cmd)
+        self._log.debug("%s", [s or e for s, e in [(r.success, r.error) for r in ret]])
