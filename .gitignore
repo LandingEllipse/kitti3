@@ -114,3 +114,6 @@ venv.bak/
 
 # setuptools_scm generated package info file
 src/kitti3/_pkg_info.py
+
+# VSCode
+.vscode/
