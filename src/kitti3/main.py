@@ -5,8 +5,7 @@ import enum
 import functools
 import sys
 import time
-from collections import namedtuple
-from typing import List, Optional, Tuple
+from typing import Iterable, List, NamedTuple, Optional, Tuple
 
 import i3ipc
 
@@ -16,24 +15,40 @@ except ImportError:
     __version__ = "N/A"
 
 
-DEFAULTS = {
-    "name": "kitti3",
-    "shape": (1.0, 0.4),
-    "position": "RIGHT",
-}
 
-CLIENTS = {
-    "kitty": {
-        "i3": {
-            "cmd": "--no-startup-id kitty --name {}",
-            "crit_attr": "window_instance",
-        },
-        "sway": {
-            "cmd": "kitty --class {}",
-            "crit_attr": "app_id",
-        },
-    },
-}
+def quote_arg(arg: str) -> str:
+    if " " in arg:
+        arg = f'"{arg}"'
+    return arg
+
+
+class CritAttr(enum.Enum):
+    """Criteria attributes used to target client instances.
+
+    Values are the corresponding i3ipc.Container attribute names.
+    """
+
+    APP_ID = "app_id"
+    CLASS = "window_class"
+    # CON_MARK = "marks"
+    INSTANCE = "window_instance"
+    TITLE = "name"
+
+    def __str__(self):
+        return self.name.lower()
+
+    @classmethod
+    def from_str(cls, name):
+        try:
+            attr = cls[name.upper()]
+        except KeyError:
+            raise ValueError(f"'{name}' is not a valid criterium attribute") from None
+        return attr
+
+
+class Client(NamedTuple):
+    cmd: str
+    cattr: CritAttr
 
 
 class Position(enum.Enum):
@@ -54,12 +69,14 @@ class Position(enum.Enum):
         return self.name
 
     @classmethod
-    def from_str(cls, val):
+    def from_str(cls, name) -> "Position":
         try:
-            pos = cls[val.upper()]
+            pos = cls[name.upper()]
         except KeyError:
-            raise ValueError(f"'{val}' is not a valid position") from None
-        if val.upper() in ("LEFT", "RIGHT"):
+            raise argparse.ArgumentTypeError(
+                f"'{name}' is not a valid position"
+            ) from None
+        if name.upper() in ("LEFT", "RIGHT"):
             pos.compat = True
         return pos
 
@@ -72,15 +89,48 @@ class Position(enum.Enum):
         return self.name[1]
 
 
-class Shape:
-    def __init__(self, x: float, y: float):
-        if max(x, y) > 1.0 or min(x, y) < 0.0:
-            raise ValueError(f"shape out of range [0,1]: x={x}, y={y}")
-        self.x: float = x
-        self.y: float = y
+class Rect(NamedTuple):
+    x: int
+    y: int
+    w: int
+    h: int
+
+    @classmethod
+    def from_i3ipc(cls, r: i3ipc.Rect):
+        return cls(r.x, r.y, r.width, r.height)
 
 
-Client = namedtuple("Client", ["cmd", "crit_attr"])
+class Shape(NamedTuple):
+    x: float
+    y: float
+
+    @classmethod
+    def from_strs(cls, strs: List[str], compat: bool = False) -> "Shape":
+        fracts = [cls._proper_fraction(v) for v in strs]
+        if compat:
+            fracts = reversed(fracts)
+        return cls(*fracts)
+
+    @staticmethod
+    def _proper_fraction(arg: str) -> float:
+        val = None
+        try:
+            val = float(arg)
+        except ValueError as e:
+            val = e
+            factors = arg.split("/")
+            if len(factors) == 2:
+                try:
+                    val = float(factors[0]) / float(factors[1])
+                except (ValueError, ZeroDivisionError) as e:
+                    val = e
+            if isinstance(val, Exception):
+                raise argparse.ArgumentTypeError(f"'{arg}': {val}") from None
+        if not (0 <= val <= 1):
+            raise argparse.ArgumentTypeError(
+                f"'{arg}': {val:.3f} is not in the range [0, 1]"
+            )
+        return val
 
 
 class Trigger(enum.Enum):
@@ -88,14 +138,6 @@ class Trigger(enum.Enum):
     SPAWNED = enum.auto()
     FLOATED = enum.auto()
     MOVED = enum.auto()
-
-
-class Rect(namedtuple("Rect", ["x", "y", "w", "h"])):
-    __slots__ = ()
-
-    @classmethod
-    def from_i3ipc(cls, r: i3ipc.Rect):
-        return cls(r.x, r.y, r.width, r.height)
 
 
 class Kitt:
@@ -106,7 +148,7 @@ class Kitt:
         shape: Shape,
         pos: Position,
         client: Client,
-        client_argv: List[str] = None,
+        client_argv: Optional[List[str]] = None,
     ):
         self.i3 = conn
         self.name = name
@@ -115,7 +157,7 @@ class Kitt:
         self.client = client
         self.client_argv = client_argv
 
-        self.con_id: Optional[str] = None
+        self.con_id: Optional[int] = None
         self.con_ws: Optional[i3ipc.WorkspaceReply] = None
         self.focused_ws: Optional[i3ipc.WorkspaceReply] = None
 
@@ -133,11 +175,11 @@ class Kitt:
             self.i3.main_quit()
 
     def on_keybind(self, _, be: i3ipc.BindingEvent) -> None:
-        """Toggle the visibility of Kitti3's Kitty instance when the appropriate keybind
+        """Toggle the visibility of the client window when the appropriate keybind
         command is triggered by the user.
 
-        Hide the Kitty window if it is present on the focused workspace, otherwise
-        fetch it from its current workspace (scratchpad or regular). Spawn a new Kitty
+        Hide the client window if it is present on the focused workspace, otherwise
+        fetch it from its current workspace (scratchpad or regular). Spawn a new client
         instance if one does not presently exist.
         """
         if be.binding.command != f"nop {self.name}":
@@ -151,20 +193,20 @@ class Kitt:
             self.align_to_ws(Trigger.KEYBIND)
 
     def on_spawned(self, _, we: i3ipc.WindowEvent) -> None:
-        """Float the Kitty window once it has settled after spawning.
+        """Float the client window once it has settled after spawning.
 
         The act of floating will trigger `on_floated()`, which will take care of
         alignment.
         """
         con = we.container
-        if getattr(con, self.client.crit_attr) != self.name:
+        if getattr(con, self.client.cattr.value) != self.name:
             return
         self.con_id = con.id
         self._refresh()
         self.align_to_ws(Trigger.SPAWNED)
 
     def on_floated(self, _, we: i3ipc.WindowEvent) -> None:
-        """Ensure that the Kitty window is aligned to its workspace when transitioning
+        """Ensure that the client window is aligned to its workspace when transitioning
         from tiled to floated.
         """
         con = we.container
@@ -182,10 +224,10 @@ class Kitt:
         self.align_to_ws(Trigger.FLOATED)
 
     def on_moved(self, _, we: i3ipc.WindowEvent) -> None:
-        """Ensure that the Kitty window is positioned and resized when moved to a
+        """Ensure that the client window is positioned and resized when moved to a
         different sized workspace (e.g. on a different monitor).
 
-        If Kitty has been manually tiled by the user it will not be re-floated.
+        If the client has been manually tiled by the user it will not be re-floated.
         """
         con = we.container
         if not (
@@ -213,7 +255,9 @@ class Kitt:
 
     def spawn(self) -> None:
         """Spawn a new client window associated with the name of this Kitti3 instance."""
-        cmd = f"exec {self.client.cmd.format(self.name)}"
+        if self.client.cmd is None:
+            return
+        cmd = f"exec {self.client.cmd.format(quote_arg(self.name))}"
         if self.client_argv:
             cmd = f"{cmd} {' '.join(self.client_argv)}"
         self.i3.command(cmd)
@@ -251,13 +295,15 @@ class Kitt:
         return Rect(x, y, width, height)
 
     def _refresh(self) -> None:
-        """Update the information on the presence of the associated Kitty instance,
+        """Update the information on the presence of the associated client instance,
         its workspace and the focused workspace.
         """
         tree = self.i3.get_tree()
+        # TODO con_mark: or (self.client.cattr is con_mark and self.no_lock)
         if self.con_id is None:
             for con in tree:
-                if getattr(con, self.client.crit_attr) == self.name:
+                # TODO con_mark: self.name in ...
+                if getattr(con, self.client.cattr.value) == self.name:
                     self.con_id = con.id
                     self.con_ws = con.workspace()
                     break
@@ -266,7 +312,7 @@ class Kitt:
         else:
             try:
                 self.con_ws = tree.find_by_id(self.con_id).workspace()
-            # The Kitty instance has despawned since the last refresh
+            # The client instance has despawned since the last refresh
             except AttributeError:
                 self.con_id = None
                 self.con_ws = None
@@ -297,8 +343,9 @@ class Kitts(Kitt):
     def spawn(self) -> None:
         r = self.con_rect()
         self.i3.command(
-            f"for_window [app_id={self.name}] 'floating enable, border none, resize set"
-            f" {r.w}ppt {r.h}ppt, move position {r.x}ppt {r.y}ppt'"
+            f"for_window [{self.client.cattr}={quote_arg(self.name)}] 'floating enable,"
+            f" border none, resize set {r.w}ppt {r.h}ppt, move position {r.x}ppt"
+            f" {r.y}ppt'"
         )
         super().spawn()
 
@@ -342,6 +389,73 @@ class Kitti3(Kitt):
         self.i3.command(cmd)
 
 
+DEFAULTS = {
+    "name": "kitti3",
+    "shape": (1.0, 0.4),
+    "position": "RIGHT",
+}
+
+CLIENTS = {
+    "kitty": {
+        "i3": {
+            "cmd": "--no-startup-id kitty --name {}",
+            "cattr": CritAttr.INSTANCE,
+        },
+        "sway": {
+            "cmd": "kitty --class {}",
+            "cattr": CritAttr.APP_ID,
+        },
+    },
+    "alacritty": {
+        "i3": {
+            "cmd": "--no-startup-id alacritty --class {}",
+            "cattr": CritAttr.INSTANCE,
+        },
+        "sway": {
+            "cmd": "alacritty --class {}",
+            "cattr": CritAttr.APP_ID,
+        },
+    },
+    "firefox": {
+        "i3": {
+            "cmd": "firefox --class {}",
+            "cattr": CritAttr.CLASS,
+        },
+        "sway": {
+            "cmd": "GDK_BACKEND=wayland firefox --name {}",
+            "cattr": CritAttr.APP_ID,
+        },
+    },
+}
+
+
+class _ListClientsAction(argparse.Action):
+    def __init__(
+        self,
+        option_strings,
+        dest=argparse.SUPPRESS,
+        default=argparse.SUPPRESS,
+        help=None,
+    ):
+        super().__init__(
+            option_strings=option_strings,
+            dest=dest,
+            default=default,
+            nargs=0,
+            help=help,
+        )
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print("Kitti3 known clients")
+        for client, wms in CLIENTS.items():
+            print(f"\n{client}")
+            for wm, props in wms.items():
+                print(f"  {wm}")
+                for prop, val in props.items():
+                    print(f"    {prop}: {val}")
+        parser.exit()
+
+
 def _split_args(args: List[str]) -> Tuple[List, Optional[List]]:
     try:
         split = args.index("--")
@@ -350,30 +464,51 @@ def _split_args(args: List[str]) -> Tuple[List, Optional[List]]:
         return args, None
 
 
-def _simple_fraction(arg: str) -> float:
-    arg = float(arg)
-    if not 0 <= arg <= 1:
-        raise argparse.ArgumentError(
-            "argument must be a simple fraction, within [0, 1]"
-    )
-    return arg
+def _format_choices(choices: Iterable):
+    choice_strs = ",".join([str(choice) for choice in choices])
+    return f"{{{choice_strs}}}"
 
 
 def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description=(
-            "Kitti3: i3/Sway drop-down manager for Kitty. Arguments following '--' are"
-            " forwarded to the Kitty instance"
+            "Kitti3: i3/sway floating window handler. Arguments following '--' are"
+            " forwarded to the client when spawning"
         )
     )
     ap.set_defaults(**defaults)
     ap.add_argument(
+        "-a",
+        "--cattr",
+        type=CritAttr.from_str,
+        choices=list(CritAttr),
+        help=(
+            f"CATTR ({_format_choices(list(CritAttr))}): criterium attribute used to"
+            " match a CLIENT instance to its NAME. Only required if a custom"
+            " expression is provided for CLIENT. If CATTR is provided but no CLIENT,"
+            " spawning is diabled and assumed to be handled by the user"
+        ),
+        metavar="",
+    )
+    _cl = ap.add_argument(
+        "-c",
+        "--client",
+        dest="cmd",
+        help=(
+            f"CLIENT (cmd exp. or {_format_choices(CLIENTS.keys())}): a custom command"
+            " expression or shorthand for one of Kitti3's known clients. For the"
+            " former, a placeholder for NAME is required, e.g. 'myapp --class {}"
+        ),
+        metavar="",
+    )
+    ap.add_argument(
         "-n",
         "--name",
         help=(
-            "name/tag used to identify this Kitti3 instance. Must match the keybinding"
-            " used in the i3/Sway config (e.g. `bindsym $mod+n nop NAME`)"
+            "NAME (string): name used to identify the CLIENT via CATTR. Must match the"
+            " keybinding used in the i3/Sway config (e.g. `bindsym $mod+n nop NAME`)"
         ),
+        metavar="",
     )
     ap.add_argument(
         "-p",
@@ -381,21 +516,29 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         type=Position.from_str,
         choices=list(Position),
         help=(
-            "where to position the Kitty window within the active workspace, e.g. 'TL'"
-            " for Top Left, or 'BC' for Bottom Center (character order does not matter)"
+            f"POSITION ({_format_choices(list(Position))}): where to position the"
+            " client window within the workspace, e.g. 'TL' for Top Left, or 'BC' for"
+            " Bottom Center (character order does not matter)"
         ),
+        metavar="",
     )
-    ap.add_argument(
+    _sh = ap.add_argument(
         "-s",
         "--shape",
-        type=_simple_fraction,
         nargs=2,
         help=(
-            "dimensions (x, y) of the Kitty window, each as a fraction of the workspace"
-            " size, e.g. '1.0 0.5' for full width, half height. Note: for backwards"
-            " compatibility, if POSITION is 'left' or 'right' (default), the dimensions"
-            " are reversed (y, x)"
+            "SHAPE SHAPE (x and y dimensions): size of the client window relative to"
+            " its workspace. Values can be given as decimals or fractions, e.g., '1"
+            " 0.25' and '1.0 1/4' are both interpreted as full width, quarter height."
+            " Note: for backwards compatibility, if POSITION is 'left' or 'right'"
+            " (default), the dimensions are interpreted in (y, x) order"
         ),
+        metavar="",
+    )
+    ap.add_argument(
+        "--list-clients",
+        action=_ListClientsAction,
+        help="list Kitti3's known clients and their command expressions",
     )
     ap.add_argument(
         "-v",
@@ -404,31 +547,48 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         version=f"%(prog)s {__version__}",
         help="show %(prog)s's version number and exit",
     )
-
     args = ap.parse_args(argv)
 
-    if args.position.compat:
-        args.shape = Shape(*reversed(args.shape))
-    else:
-        args.shape = Shape(*args.shape)
+    try:
+        args.shape = Shape.from_strs(args.shape, args.position.compat)
+    except argparse.ArgumentTypeError as e:
+        ap.error(str(argparse.ArgumentError(_sh, str(e))))
+
+    if args.cmd is None:
+        # default to Kitty for backwards compatibility
+        if args.cattr is None:
+            args.cmd = "kitty"
+    elif args.cmd not in CLIENTS:
+        if args.cattr is None:
+            msg = (
+                f"'{args.cmd}' is not a known client; if it is a custom expression,"
+                " CATTR must also be provided"
+            )
+            ap.error(str(argparse.ArgumentError(_cl, msg)))
+        elif "{}" not in args.cmd:
+            msg = (
+                f"custom client expression '{args.cmd}' must contain a '{{}}'"
+                " placeholder for NAME"
+            )
+            ap.error(str(argparse.ArgumentError(_cl, msg)))
 
     return args
 
 
 def cli() -> None:
-    argv_kitti3, argv_kitty = _split_args(sys.argv[1:])
+    argv_kitti3, argv_client = _split_args(sys.argv[1:])
     args = _parse_args(argv_kitti3, DEFAULTS)
 
-    conn = i3ipc.Connection()
     # FIXME: half-baked way of checking what WM we're running on.
+    conn = i3ipc.Connection()
     sway = "sway" in conn.socket_path or conn.get_version().major < 3
     _Kitt = Kitts if sway else Kitti3
-    # TODO: add arg --client and --crit-attr:
-    #   - if client is single word, create Client from CLIENTS lookup,
-    #   - else ensure name placeholder in client and use w/--crit-attr to create Client
-    #   - client should default to 'kitty'
-    #   - crit-attr should default to window_instance for i3 and app_id for sway
-    client = Client(**CLIENTS["kitty"]["sway" if sway else "i3"])
+
+    if args.cmd in CLIENTS:
+        c = CLIENTS[args.cmd]["sway" if sway else "i3"]
+        args.cmd = c["cmd"]
+        args.cattr = c["cattr"]
+    client = Client(args.cmd, args.cattr)
 
     kitt = _Kitt(
         conn=conn,
@@ -436,7 +596,7 @@ def cli() -> None:
         shape=args.shape,
         pos=args.position,
         client=client,
-        client_argv=argv_kitty,
+        client_argv=argv_client,
     )
     kitt.loop()
 
