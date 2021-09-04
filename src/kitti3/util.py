@@ -1,8 +1,16 @@
 import argparse
 import enum
-from typing import List, NamedTuple
+import time
+from typing import Callable, List, NamedTuple, Optional
 
 import i3ipc
+
+
+class AnimParams(NamedTuple):
+    enabled: bool
+    anchor: "Loc"
+    enter_dur: float
+    fps: int
 
 
 class CritAttr(enum.Enum):
@@ -34,7 +42,15 @@ class Client(NamedTuple):
     cattr: CritAttr
 
 
-class Position(enum.Enum):
+class Loc(enum.Enum):
+    LEFT = L = enum.auto()
+    RIGHT = R = enum.auto()
+    TOP = T = enum.auto()
+    BOTTOM = B = enum.auto()
+    CENTER = C = enum.auto()
+
+
+class Pos(enum.Enum):
     LT = TL = LEFT = TOP = enum.auto()
     LC = CL = enum.auto()
     LB = BL = BOTTOM = enum.auto()
@@ -47,12 +63,13 @@ class Position(enum.Enum):
 
     def __init__(self, _):
         self.compat: bool = False
+        self.anchor: Optional[Loc] = None
 
     def __str__(self):
         return self.name
 
     @classmethod
-    def from_str(cls, name) -> "Position":
+    def from_str(cls, name) -> "Pos":
         try:
             pos = cls[name.upper()]
         except KeyError:
@@ -61,15 +78,25 @@ class Position(enum.Enum):
             ) from None
         if name.upper() in ("LEFT", "RIGHT"):
             pos.compat = True
+        pos.anchor = cls._anchor_for(name.upper())
         return pos
+
+    @staticmethod
+    def _anchor_for(name):
+        if name == "CC":
+            return None
+        elif name[0] == "C":
+            return Loc[name[1]]
+        # also works for name in ("LEFT", "RIGHT")
+        return Loc[name[0]]
 
     @property
     def x(self):
-        return self.name[0]
+        return Loc[self.name[0]]
 
     @property
     def y(self):
-        return self.name[1]
+        return Loc[self.name[1]]
 
 
 class Rect(NamedTuple):
@@ -114,3 +141,35 @@ class Shape(NamedTuple):
                 f"'{arg}': {val:.3f} is not in the range [0, 1]"
             )
         return val
+
+
+def animate(
+    callback: Callable[[int, int], None],
+    start: int,
+    end: int,
+    duration: float,
+    fps: int,
+):
+    num_steps = round(duration * fps)
+    if num_steps < 2:
+        callback(0, end)
+        return
+    step_size = (end - start) / (num_steps - 1)
+    linspaced = [round(start + step_size * i) for i in range(num_steps)]
+    steps = []
+    for pos in linspaced:
+        if pos not in steps:
+            steps.append(pos)
+    # compromise fps if duplicate positions removed, to ensure duration
+    delay = duration / (len(steps) - 1)
+    t_0 = t_curr = time.time()
+    for frame, pos in enumerate(steps):
+        t_target = t_0 + delay * frame
+        while True:
+            if t_curr >= t_target:
+                callback(frame, pos)
+                break
+            else:
+                # ok, as t_target approach prevents wakeup overhead from accumulating
+                time.sleep(t_target - t_curr)
+            t_curr = time.time()

@@ -1,12 +1,12 @@
 import argparse
 import logging
 import sys
-from typing import Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple, Type, TypeVar
 
 import i3ipc
 
 from .kitt import Kitti3, Kitts
-from .util import CritAttr, Position, Shape, Client
+from .util import AnimParams, Client, CritAttr, Pos, Shape
 
 try:
     from . import __version__
@@ -18,6 +18,8 @@ DEFAULTS = {
     "name": "kitti3",
     "shape": (1.0, 0.4),
     "position": "RIGHT",
+    "anim_enter": 0.15,
+    "anim_fps": 60,
 }
 
 CLIENTS = {
@@ -94,6 +96,24 @@ def _format_choices(choices: Iterable):
     return f"{{{choice_strs}}}"
 
 
+T = TypeVar("T", int, float)
+
+
+def _num_in(type_: Type[T], min_: T, max_: T) -> Callable[[str], T]:
+    def validator(arg: str) -> T:
+        try:
+            val = type_(arg)
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(f"'{arg}': {e}") from None
+        if not (min_ <= val <= max_):
+            raise argparse.ArgumentTypeError(
+                f"'{arg}': {val} is not in the range [{min_}, {max_}]"
+            )
+        return val
+
+    return validator
+
+
 def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description=(
@@ -130,20 +150,22 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         "-n",
         "--name",
         help=(
-            "NAME (string): name used to identify the CLIENT via CATTR. Must match the"
-            " keybinding used in the i3/Sway config (e.g. `bindsym $mod+n nop NAME`)"
+            f"NAME (string, default: '{DEFAULTS['name']}'): name used to identify the"
+            " CLIENT via CATTR. Must match the keybinding used in the i3/Sway config"
+            " (e.g. `bindsym $mod+n nop NAME`)"
         ),
         metavar="",
     )
     ap.add_argument(
         "-p",
         "--position",
-        type=Position.from_str,
-        choices=list(Position),
+        type=Pos.from_str,
+        choices=list(Pos),
         help=(
-            f"POSITION ({_format_choices(list(Position))}): where to position the"
-            " client window within the workspace, e.g. 'TL' for Top Left, or 'BC' for"
-            " Bottom Center (character order does not matter)"
+            f"POSITION ({_format_choices(list(Pos))}, default:"
+            f" '{DEFAULTS['position']}'): where to position the client window within"
+            " the workspace, e.g. 'TL' for Top Left, or 'BC' for Bottom Center"
+            " (character order does not matter)"
         ),
         metavar="",
     )
@@ -152,11 +174,36 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         "--shape",
         nargs=2,
         help=(
-            "SHAPE SHAPE (x and y dimensions): size of the client window relative to"
-            " its workspace. Values can be given as decimals or fractions, e.g., '1"
-            " 0.25' and '1.0 1/4' are both interpreted as full width, quarter height."
-            " Note: for backwards compatibility, if POSITION is 'left' or 'right'"
-            " (default), the dimensions are interpreted in (y, x) order"
+            "SHAPE SHAPE (x y, default:"
+            f" '{' '.join(str(s) for s in reversed(DEFAULTS['shape']))}'): size of the"
+            " client window relative to its workspace. Values can be given as decimals"
+            " or fractions, e.g., '1 0.25' and '1.0 1/4' are both interpreted as full"
+            " width, quarter height. Note: for backwards compatibility, if POSITION is"
+            " 'left' or 'right' (default), the dimensions are interpreted in (y, x)"
+            " order"
+        ),
+        metavar="",
+    )
+    ap.add_argument(
+        "--animate",
+        action="store_true",
+        help="enable slide-in animation",
+    )
+    ap.add_argument(
+        "--anim-enter",
+        type=_num_in(float, 0.01, 1),
+        help=(
+            f"DURATION (float in [0.01, 1], default: {DEFAULTS['anim_enter']}):"
+            " duration of animated slide-in"
+        ),
+        metavar="",
+    )
+    ap.add_argument(
+        "--anim-fps",
+        type=_num_in(int, 1, 100),
+        help=(
+            f"FPS (int in [1, 100], default: {DEFAULTS['anim_fps']}):"
+            " target animation frames per second"
         ),
         metavar="",
     )
@@ -203,6 +250,10 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
             )
             ap.error(str(argparse.ArgumentError(_cl, msg)))
 
+    args.anim_params = AnimParams(
+        args.animate, args.position.anchor, args.anim_enter, args.anim_fps
+    )
+
     return args
 
 
@@ -239,5 +290,6 @@ def cli() -> None:
         pos=args.position,
         client=client,
         client_argv=argv_client,
+        anim=args.anim_params,
     )
     kitt.loop()

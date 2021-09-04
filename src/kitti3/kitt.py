@@ -6,7 +6,7 @@ from typing import List, Optional
 
 import i3ipc
 
-from .util import Client, Position, Rect, Shape
+from .util import AnimParams, Client, Loc, Pos, Rect, Shape, animate
 
 
 class Event(enum.Enum):
@@ -22,9 +22,10 @@ class Kitt:
         conn: i3ipc.Connection,
         name: str,
         shape: Shape,
-        pos: Position,
+        pos: Pos,
         client: Client,
-        client_argv: Optional[List[str]] = None,
+        client_argv: Optional[List[str]],
+        anim: AnimParams,
     ):
         self.i3 = conn
         self.name = name
@@ -32,11 +33,12 @@ class Kitt:
         self.pos = pos
         self.client = client
         self.client_argv = client_argv
+        self.anim = anim
 
         self._log = logging.getLogger(self.__class__.__name__)
         self.con_id: Optional[int] = None
-        self.con_ws: Optional[i3ipc.WorkspaceReply] = None
-        self.focused_ws: Optional[i3ipc.WorkspaceReply] = None
+        self.con_ws: Optional[i3ipc.Con] = None
+        self.focused_ws: Optional[i3ipc.Con] = None
 
         self.i3.on("binding", self.on_keybind)
         self.i3.on("window::new", self.on_spawned)
@@ -156,28 +158,28 @@ class Kitt:
             width = round(self.shape.x * 100)
             height = round(self.shape.y * 100)
             x = {
-                "L": 0,
-                "C": round(50 - (width / 2)),
-                "R": 100 - width,
+                Loc.LEFT: 0,
+                Loc.CENTER: round(50 - (width / 2)),
+                Loc.RIGHT: 100 - width,
             }[self.pos.x]
             y = {
-                "T": 0,
-                "C": round(50 - (height / 2)),
-                "B": 100 - height,
+                Loc.TOP: 0,
+                Loc.CENTER: round(50 - (height / 2)),
+                Loc.BOTTOM: 100 - height,
             }[self.pos.y]
         # absolute/px
         else:
             width = round(abs_ref.w * self.shape.x)
             height = round(abs_ref.h * self.shape.y)
             x = {
-                "L": abs_ref.x,
-                "C": abs_ref.x + round((abs_ref.w / 2) - (width / 2)),
-                "R": abs_ref.x + abs_ref.w - width,
+                Loc.LEFT: abs_ref.x,
+                Loc.CENTER: abs_ref.x + round((abs_ref.w / 2) - (width / 2)),
+                Loc.RIGHT: abs_ref.x + abs_ref.w - width,
             }[self.pos.x]
             y = {
-                "T": abs_ref.y,
-                "C": abs_ref.y + round((abs_ref.h / 2) - (height / 2)),
-                "B": abs_ref.y + abs_ref.h - height,
+                Loc.TOP: abs_ref.y,
+                Loc.CENTER: abs_ref.y + round((abs_ref.h / 2) - (height / 2)),
+                Loc.BOTTOM: abs_ref.y + abs_ref.h - height,
             }[self.pos.y]
         return Rect(x, y, width, height)
 
@@ -261,12 +263,46 @@ class Kitts(Kitt):
         move = f"move position {r.x}ppt {r.y}ppt"
         if trigger == Event.KEYBIND:
             fetch = f"move container to workspace {self.focused_ws.name}"
-            cmd = f"{crit} {fetch}, {resize}, {move}, focus"
+            if self.anim.enabled and self.anim.anchor is not None:
+                ret = "N/A (animation)"
+                role_x, role_y, start, end = {
+                    Loc.LEFT: ("{}", r.y, 0 - r.w, r.x),
+                    Loc.RIGHT: ("{}", r.y, 100, r.x),
+                    Loc.TOP: (r.x, "{}", 0 - r.h, r.y),
+                    Loc.BOTTOM: (r.x, "{}", 100, r.y),
+                }[self.anim.anchor]
+                move_fmt = f"move position {role_x}ppt {role_y}ppt"
+                cmd = f"{crit} {fetch}, {resize}, {move_fmt}, focus"
+                cmd_move = f"{crit} {move_fmt}"
+
+                def move_cb(frame: int, pos: int) -> None:
+                    # ensure first frame move lands in same transaction as fetch
+                    if frame == 0:
+                        self.i3.command(cmd.format(pos))
+                    else:
+                        self.i3.command(cmd_move.format(pos))
+
+                animate(
+                    move_cb,
+                    start,
+                    end,
+                    self.anim.enter_dur,
+                    self.anim.fps,
+                )
+            else:
+                cmd = f"{crit} {fetch}, {resize}, {move}, focus"
+                ret = self.i3.command(cmd)
+
         else:
             cmd = f"{crit} {resize}, {move}"
+            ret = self.i3.command(cmd)
         self._log.debug(cmd)
-        ret = self.i3.command(cmd)
-        self._log.debug("%s", [s or e for s, e in [(r.success, r.error) for r in ret]])
+        self._log.debug(
+            "%s",
+            ret
+            if isinstance(ret, str)
+            else [s or e for s, e in [(r.success, r.error) for r in ret]],
+        )
 
 
 class Kitti3(Kitt):
