@@ -112,8 +112,8 @@ venv.bak/
 # Py.test
 .pytest_cache/
 
-# setuptools_scm generated package info file
-src/kitti3/_pkg_info.py
-
 # VSCode
 .vscode/
+
+# Poetry
+poetry.lock
