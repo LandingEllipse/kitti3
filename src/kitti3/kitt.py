@@ -207,10 +207,13 @@ class Kitt:
         else:
             try:
                 self.con_ws = tree.find_by_id(self.con_id).workspace()
-            # the client instance has despawned since the last refresh
             except AttributeError:
+                self.log.info(
+                    "con_id: %s has despawned; looking for an alternative", self.con_id
+                )
                 self.con_id = None
                 self.con_ws = None
+                return self.refresh()
         # WS refs from get_tree() are stubs with no focus info,
         # so have to perform a second query
         for ws in self.i3.get_workspaces():
