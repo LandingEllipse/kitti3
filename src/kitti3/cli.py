@@ -6,7 +6,7 @@ from typing import Callable, Iterable, List, Optional, Tuple, Type, TypeVar
 import i3ipc
 
 from .kitt import Kitti3, Kitts
-from .util import AnimParams, Client, CritAttr, Pos, Shape
+from .util import AnimParams, Client, Cattr, Pos, Shape
 
 try:
     from . import __version__
@@ -27,31 +27,31 @@ CLIENTS = {
     "kitty": {
         "i3": {
             "cmd": "--no-startup-id kitty --name {}",
-            "cattr": CritAttr.INSTANCE,
+            "cattr": Cattr.INSTANCE,
         },
         "sway": {
             "cmd": "kitty --class {}",
-            "cattr": CritAttr.APP_ID,
+            "cattr": Cattr.APP_ID,
         },
     },
     "alacritty": {
         "i3": {
             "cmd": "--no-startup-id alacritty --class {}",
-            "cattr": CritAttr.INSTANCE,
+            "cattr": Cattr.INSTANCE,
         },
         "sway": {
             "cmd": "alacritty --class {}",
-            "cattr": CritAttr.APP_ID,
+            "cattr": Cattr.APP_ID,
         },
     },
     "firefox": {
         "i3": {
             "cmd": "firefox --class {}",
-            "cattr": CritAttr.CLASS,
+            "cattr": Cattr.CLASS,
         },
         "sway": {
             "cmd": "GDK_BACKEND=wayland firefox --name {}",
-            "cattr": CritAttr.APP_ID,
+            "cattr": Cattr.APP_ID,
         },
     },
 }
@@ -216,10 +216,10 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
     ag_id.add_argument(
         "-t",
         "--cattr",
-        type=CritAttr.from_str,
-        choices=list(CritAttr),
+        type=Cattr.from_str,
+        choices=list(Cattr),
         help=(
-            f"CATTR ({_format_choices(list(CritAttr))}): criterium attribute used to"
+            f"CATTR ({_format_choices(list(Cattr))}): criterium attribute used to"
             " match a CLIENT instance to its NAME. Only required if a custom"
             " expression is provided for CLIENT. If CATTR is provided but no CLIENT,"
             " spawning is diabled and assumed to be handled by the user"

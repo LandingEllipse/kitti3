@@ -7,7 +7,7 @@ from typing import List, Optional
 
 import i3ipc
 
-from .util import AnimParams, Client, Loc, Pos, Rect, Shape, animate
+from .util import AnimParams, Client, Cattr, Loc, Pos, Rect, Shape, animate
 
 
 class Event(enum.Enum):
@@ -92,7 +92,7 @@ class Kitt:
     def on_spawned(self, _, we: i3ipc.WindowEvent) -> None:
         """Bind to a client with a criterium attribute matching Kitti3's instance name."""
         con = we.container
-        if getattr(con, self.client.cattr.value) != self.name:
+        if not self._cattr_matches(con):
             return
         self.log.debug(
             '[%s="%s"] matched on con_id: %s',
@@ -112,17 +112,21 @@ class Kitt:
         from tiled to floated.
         """
         con = we.container
-        if not (
-            con.id == self.con_id
-            # cf on_moved, for i3 con is our target, but .type == "floating_con" is only
-            # used for the floating wrapper. Hence the need to check .floating.
-            and (con.type == "floating_con" or con.floating == "user_on")
+        # note: cf on_moved, for i3 con is our target, but .type == "floating_con" is 
+        # only set on the floating wrapper. Hence the need to check .floating.
+        if (con.type != "floating_con" and con.floating != "user_on") or (
+            # marks are unique; want to associate to new client if mark has moved...
+            not self._cattr_matches(con)
+            # ...but only if we're not loyal to an existing association
+            if self.client.cattr == Cattr.CON_MARK and not self.loyal
+            else con.id != self.con_id
         ):
             return
-        if not self.refresh():
-            return
-        # toggle-while-tiled trigger repression
-        elif self.con_ws.name == "__i3_scratch":
+        if (
+            not self.refresh()
+            # toggle-while-tiled trigger repression
+            or self.con_ws.name == "__i3_scratch"
+        ):
             return
         self.align_to_ws(Event.FLOATED)
 
@@ -133,18 +137,19 @@ class Kitt:
         If the client has been manually tiled by the user it will not be re-floated.
         """
         con = we.container
-        if not (
-            # ignore tiled cons
-            con.type == "floating_con"
-            # event's con is floating wrapper for i3, but target con for sway
-            and (con.id == self.con_id or con.find_by_id(self.con_id))
+        if con.type != "floating_con" or (
+            # marks are unique; want to associate to new client if mark has moved...
+            not self._cattr_matches(con)
+            # ...but only if we're not loyal to an existing association
+            if self.client.cattr == Cattr.CON_MARK and not self.loyal
+            # note: event's con is floating wrapper for i3, but target con for sway
+            else (con.id != self.con_id and not con.find_by_id(self.con_id))
         ):
             return
-        if not self.refresh():
-            return
-        elif (
+        if (
+            not self.refresh()
             # avoid double-triggering
-            self.con_ws.name == getattr(self.focused_ws, "name", "")
+            or self.con_ws.name == self.focused_ws.name
             # avoid triggering on a move to the scratchpad
             or self.con_ws.name == "__i3_scratch"
         ):
@@ -194,15 +199,16 @@ class Kitt:
         its workspace and the focused workspace.
         """
         tree = self.i3.get_tree()
-        # TODO con_mark: or (self.client.cattr is con_mark and not self.loyal)
-        if self.con_id is None:
+        if self.con_id is None or (
+            self.client.cattr == Cattr.CON_MARK and not self.loyal
+        ):
             for con in tree:
-                # TODO con_mark: self.name in ...
-                if getattr(con, self.client.cattr.value) == self.name:
+                if self._cattr_matches(con):
                     self.con_id = con.id
                     self.con_ws = con.workspace()
                     break
             else:
+                self.con_id = None
                 self.con_ws = None
         else:
             try:
@@ -268,6 +274,16 @@ class Kitt:
                 Loc.BOTTOM: abs_ref.y + abs_ref.h - height,
             }[self.pos.y]
         return Rect(x, y, width, height)
+
+    def _cattr_matches(self, con: i3ipc.Con) -> bool:
+        cval = getattr(con, self.client.cattr.value)
+        if cval is None:
+            return False
+        if (isinstance(cval, str) and cval == self.name) or (
+            isinstance(cval, list) and self.name in cval
+        ):
+            return True
+        return False
 
     @staticmethod
     def _escape(arg: str) -> str:

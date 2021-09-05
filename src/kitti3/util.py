@@ -13,7 +13,7 @@ class AnimParams(NamedTuple):
     fps: int
 
 
-class CritAttr(enum.Enum):
+class Cattr(enum.Enum):
     """Criteria attributes used to target client instances.
 
     Values are the corresponding i3ipc.Container attribute names.
@@ -21,7 +21,7 @@ class CritAttr(enum.Enum):
 
     APP_ID = "app_id"
     CLASS = "window_class"
-    # CON_MARK = "marks"
+    CON_MARK = "marks"
     INSTANCE = "window_instance"
     TITLE = "name"
 
@@ -39,7 +39,7 @@ class CritAttr(enum.Enum):
 
 class Client(NamedTuple):
     cmd: str
-    cattr: CritAttr
+    cattr: Cattr
 
 
 class Loc(enum.Enum):
