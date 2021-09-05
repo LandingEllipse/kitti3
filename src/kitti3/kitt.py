@@ -178,7 +178,7 @@ class Kitt:
 
     def send_rule(self, *cmds: str) -> None:
         c = self.commands
-        crit = c.crit.format(self.client.cattr.value, self._escape(self.name))
+        crit = c.crit.format(self.client.cattr, self._escape(self.name))
         pre = f"{c.rule} {crit}"
         cmd_str = ", ".join(cmds)
         payload = f"{pre} '{cmd_str}'"
@@ -229,9 +229,7 @@ class Kitt:
         ok = None not in (self.con_id, self.con_ws, self.focused_ws)
         if not ok:
             if self.con_id is None:
-                self.log.info(
-                    'no con matching [%s="%s"]', self.client.cattr.value, self.name
-                )
+                self.log.info('no con matching [%s="%s"]', self.client.cattr, self.name)
             else:
                 self.log.warning("missing workspace guard tripped")
         return ok
