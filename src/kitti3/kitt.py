@@ -284,6 +284,8 @@ class Kitts(Kitt):
         return
 
     def spawn(self) -> None:
+        if self.client.cmd is None:
+            return
         r = self.con_rect()
         c = self.commands
         self.send_rule(c.float_, c.resize.format(r.w, r.h), c.move.format(r.x, r.y))
