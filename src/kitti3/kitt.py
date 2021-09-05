@@ -2,6 +2,7 @@ import enum
 import functools
 import logging
 import time
+from types import SimpleNamespace
 from typing import List, Optional
 
 import i3ipc
@@ -35,16 +36,32 @@ class Kitt:
         self.client_argv = client_argv
         self.anim = anim
 
-        self._log = logging.getLogger(self.__class__.__name__)
+        self.log = logging.getLogger(self.__class__.__name__)
+        self.debug = self.log.getEffectiveLevel() == logging.DEBUG
         self.con_id: Optional[int] = None
         self.con_ws: Optional[i3ipc.Con] = None
         self.focused_ws: Optional[i3ipc.Con] = None
+        self.commands = SimpleNamespace(
+            crit="[{}={}]",
+            fetch="move container to workspace {}",
+            float_="floating enable, border none",
+            focus="focus",
+            hide="floating enable, move scratchpad",
+            move="move position {}ppt {}ppt",
+            move_abs="move absolute position {}px {}px",
+            resize="resize set {}ppt {}ppt",
+            resize_abs="resize set {}px {}px",
+            rule="for_window",
+        )
 
         self.i3.on("binding", self.on_keybind)
         self.i3.on("window::new", self.on_spawned)
         self.i3.on("window::floating", self.on_floated)
         self.i3.on("window::move", self.on_moved)
         self.i3.on("shutdown::exit", self.on_shutdown)
+
+    def align_to_ws(self, context: Event) -> None:
+        raise NotImplementedError
 
     def loop(self) -> None:
         """Enter listening mode, awaiting IPC events."""
@@ -55,38 +72,36 @@ class Kitt:
 
     def on_keybind(self, _, be: i3ipc.BindingEvent) -> None:
         """Toggle the visibility of the client window when the appropriate keybind
-        command is triggered by the user.
-
-        Hide the client window if it is present on the focused workspace, otherwise
-        fetch it from its current workspace (scratchpad or regular). Spawn a new client
-        instance if one does not presently exist.
+        command is triggered by the user. Attempt to spawn a client if none is found.
         """
         if be.binding.command != f"nop {self.name}":
             return
-        self._log.debug("%s", be.binding.command)
-        self._refresh()
-        if self.con_id is None:
-            self.spawn()
+        self.log.debug("%s", be.binding.command)
+        if not self.refresh():
+            if self.con_id is None:
+                self.spawn()
         elif self.con_ws.name == self.focused_ws.name:
-            cmd = f"[con_id={self.con_id}] floating enable, move scratchpad"
-            self._log.debug("%s", cmd)
-            self.i3.command(cmd)
+            self.send(self.commands.hide)
         else:
             self.align_to_ws(Event.KEYBIND)
 
     def on_spawned(self, _, we: i3ipc.WindowEvent) -> None:
-        """Float the client window once it has settled after spawning.
-
-        The act of floating will trigger `on_floated()`, which will take care of
-        alignment.
-        """
+        """Bind to a client with a criterium attribute matching Kitti3's instance name."""
         con = we.container
         if getattr(con, self.client.cattr.value) != self.name:
             return
-        self._log.debug("matched %s", con.id)
+        self.log.debug(
+            '[%s="%s"] matched on con_id: %s',
+            self.client.cattr.value,
+            self.name,
+            con.id,
+        )
+        # if self.con_id is not None and self.loyal:
+        #     self.log.warning("loyal to %s, ignoring %s", self.con_id, con_id)
+        #     return
         self.con_id = con.id
-        self._refresh()
-        self.align_to_ws(Event.SPAWNED)
+        if self.refresh():
+            self.align_to_ws(Event.SPAWNED)
 
     def on_floated(self, _, we: i3ipc.WindowEvent) -> None:
         """Ensure that the client window is aligned to its workspace when transitioning
@@ -94,15 +109,13 @@ class Kitt:
         """
         con = we.container
         if not (
+            con.id == self.con_id
             # cf on_moved, for i3 con is our target, but .type == "floating_con" is only
             # used for the floating wrapper. Hence the need to check .floating.
-            (con.type == "floating_con" or con.floating == "user_on")
-            and con.id == self.con_id
+            and (con.type == "floating_con" or con.floating == "user_on")
         ):
             return
-        self._refresh()
-        if self.con_ws is None:
-            self._log.warning("despawn guard tripped: client workspace is None")
+        if not self.refresh():
             return
         # toggle-while-tiled trigger repression
         elif self.con_ws.name == "__i3_scratch":
@@ -123,9 +136,7 @@ class Kitt:
             and (con.id == self.con_id or con.find_by_id(self.con_id))
         ):
             return
-        self._refresh()
-        if self.con_ws is None:
-            self._log.warning("despawn guard tripped: client workspace is None")
+        if not self.refresh():
             return
         elif (
             # avoid double-triggering
@@ -137,19 +148,89 @@ class Kitt:
         self.align_to_ws(Event.MOVED)
 
     def on_shutdown(self, _, se: i3ipc.ShutdownEvent):
-        self._log.debug("received IPC shutdown command; exiting...")
+        self.log.debug("received IPC shutdown command; exiting...")
         exit(0)
 
     def spawn(self) -> None:
         """Spawn a new client window associated with the name of this Kitti3 instance."""
         if self.client.cmd is None:
-            self._log.warning("unable to comply; spawning is disabled")
+            self.log.warning("unable to comply: spawning is disabled")
             return
         cmd = f"exec {self.client.cmd.format(self._escape(self.name))}"
         if self.client_argv:
             cmd = f"{cmd} {' '.join(self.client_argv)}"
-        self._log.debug("%s", cmd)
-        self.i3.command(cmd)
+        reply = self.i3.command(cmd)[0]
+        self.log.debug("%s -> %s", cmd, reply.success and "OK" or reply.error)
+
+    def send(self, *cmds: str) -> None:
+        c = self.commands
+        crit = c.crit.format("con_id", self.con_id)
+        payload = f"{crit} {', '.join(cmds)}"
+        replies = self.i3.command(payload)
+        if self.debug:
+            self.log.debug(crit)
+            for cmd, reply in zip(cmds, replies):
+                self.log.debug("  %s -> %s", cmd, reply.success and "OK" or reply.error)
+
+    def send_rule(self, *cmds: str) -> None:
+        c = self.commands
+        crit = c.crit.format(self.client.cattr.value, self._escape(self.name))
+        pre = f"{c.rule} {crit}"
+        cmd_str = ", ".join(cmds)
+        payload = f"{pre} '{cmd_str}'"
+        reply = self.i3.command(payload)[0]
+        if self.debug:
+            self.log.debug(pre)
+            self.log.debug(
+                "  '%s' -> %s", cmd_str, reply.success and "OK" or reply.error
+            )
+
+    def refresh(self) -> bool:
+        """Update the information on the presence of the associated client instance,
+        its workspace and the focused workspace.
+        """
+        tree = self.i3.get_tree()
+        # TODO con_mark: or (self.client.cattr is con_mark and not self.loyal)
+        if self.con_id is None:
+            for con in tree:
+                # TODO con_mark: self.name in ...
+                if getattr(con, self.client.cattr.value) == self.name:
+                    self.con_id = con.id
+                    self.con_ws = con.workspace()
+                    break
+            else:
+                self.con_ws = None
+        else:
+            try:
+                self.con_ws = tree.find_by_id(self.con_id).workspace()
+            # the client instance has despawned since the last refresh
+            except AttributeError:
+                self.con_id = None
+                self.con_ws = None
+        # WS refs from get_tree() are stubs with no focus info,
+        # so have to perform a second query
+        for ws in self.i3.get_workspaces():
+            if ws.focused:
+                self.focused_ws = ws
+                break
+        else:
+            self.focused_ws = None
+
+        self.log.debug(
+            "con_id: %s, con_ws: %s, focused_ws: %s",
+            self.con_id,
+            getattr(self.con_ws, "name", None),
+            getattr(self.focused_ws, "name", None),
+        )
+        ok = None not in (self.con_id, self.con_ws, self.focused_ws)
+        if not ok:
+            if self.con_id is None:
+                self.log.info(
+                    'no con matching [%s="%s"]', self.client.cattr.value, self.name
+                )
+            else:
+                self.log.warning("missing workspace guard tripped")
+        return ok
 
     @functools.lru_cache()
     def con_rect(self, abs_ref: Rect = None) -> Rect:
@@ -189,47 +270,6 @@ class Kitt:
             arg = f'"{arg}"'
         return arg
 
-    def _refresh(self) -> None:
-        """Update the information on the presence of the associated client instance,
-        its workspace and the focused workspace.
-        """
-        tree = self.i3.get_tree()
-        # TODO con_mark: or (self.client.cattr is con_mark and self.no_lock)
-        if self.con_id is None:
-            for con in tree:
-                # TODO con_mark: self.name in ...
-                if getattr(con, self.client.cattr.value) == self.name:
-                    self.con_id = con.id
-                    self.con_ws = con.workspace()
-                    break
-            else:
-                self.con_ws = None
-        else:
-            try:
-                self.con_ws = tree.find_by_id(self.con_id).workspace()
-            # The client instance has despawned since the last refresh
-            except AttributeError:
-                self.con_id = None
-                self.con_ws = None
-        # WS refs from get_tree() are stubs with no focus info, so have to perform a
-        # second query
-        for ws in self.i3.get_workspaces():
-            if ws.focused:
-                self.focused_ws = ws
-                break
-        else:
-            self.focused_ws = None
-
-        self._log.debug(
-            "con_id: %s, con_ws: %s, focused_ws: %s",
-            self.con_id,
-            getattr(self.con_ws, "name", None),
-            getattr(self.focused_ws, "name", None),
-        )
-
-    def align_to_ws(self, context: Event) -> None:
-        raise NotImplementedError
-
 
 class Kitts(Kitt):
     def __init__(self, *args, **kwargs):
@@ -244,11 +284,8 @@ class Kitts(Kitt):
 
     def spawn(self) -> None:
         r = self.con_rect()
-        self.i3.command(
-            f"for_window [{self.client.cattr}={self._escape(self.name)}] 'floating"
-            f" enable, border none, resize set {r.w}ppt {r.h}ppt, move position"
-            f" {r.x}ppt {r.y}ppt'"
-        )
+        c = self.commands
+        self.send_rule(c.float_, c.resize.format(r.w, r.h), c.move.format(r.x, r.y))
         super().spawn()
 
     def align_to_ws(self, trigger: Event) -> None:
@@ -256,53 +293,41 @@ class Kitts(Kitt):
             return
         if trigger == Event.FLOATED and self.sway_timing_compat:
             time.sleep(0.02)
-        self._log.debug(trigger)
+        self.log.debug(trigger)
         r = self.con_rect()
-        crit = f"[con_id={self.con_id}]"
-        resize = f"resize set {r.w}ppt {r.h}ppt"
-        move = f"move position {r.x}ppt {r.y}ppt"
+        c = self.commands
         if trigger == Event.KEYBIND:
-            fetch = f"move container to workspace {self.focused_ws.name}"
             if self.anim.enabled and self.anim.anchor is not None:
-                ret = "N/A (animation)"
                 role_x, role_y, start, end = {
                     Loc.LEFT: ("{}", r.y, 0 - r.w, r.x),
                     Loc.RIGHT: ("{}", r.y, 100, r.x),
                     Loc.TOP: (r.x, "{}", 0 - r.h, r.y),
                     Loc.BOTTOM: (r.x, "{}", 100, r.y),
                 }[self.anim.anchor]
-                move_fmt = f"move position {role_x}ppt {role_y}ppt"
-                cmd = f"{crit} {fetch}, {resize}, {move_fmt}, focus"
-                cmd_move = f"{crit} {move_fmt}"
+                move_partial = c.move.format(role_x, role_y)
 
                 def move_cb(frame: int, pos: int) -> None:
                     # ensure first frame move lands in same transaction as fetch
                     if frame == 0:
-                        self.i3.command(cmd.format(pos))
+                        self.send(
+                            c.fetch.format(self.focused_ws.name),
+                            c.resize.format(r.w, r.h),
+                            move_partial.format(pos),
+                            c.focus,
+                        )
                     else:
-                        self.i3.command(cmd_move.format(pos))
+                        self.send(move_partial.format(pos))
 
-                animate(
-                    move_cb,
-                    start,
-                    end,
-                    self.anim.enter_dur,
-                    self.anim.fps,
-                )
+                animate(move_cb, start, end, self.anim.enter_dur, self.anim.fps)
             else:
-                cmd = f"{crit} {fetch}, {resize}, {move}, focus"
-                ret = self.i3.command(cmd)
-
+                self.send(
+                    c.fetch.format(self.focused_ws.name),
+                    c.resize.format(r.w, r.h),
+                    c.move.format(r.x, r.y),
+                    c.focus,
+                )
         else:
-            cmd = f"{crit} {resize}, {move}"
-            ret = self.i3.command(cmd)
-        self._log.debug(cmd)
-        self._log.debug(
-            "%s",
-            ret
-            if isinstance(ret, str)
-            else [s or e for s, e in [(r.success, r.error) for r in ret]],
-        )
+            self.send(c.resize.format(r.w, r.h), c.move.format(r.x, r.y))
 
 
 class Kitti3(Kitt):
@@ -311,20 +336,19 @@ class Kitti3(Kitt):
         # to the rect defined by the bounding box of all outputs, not by the con's
         # workspace. Yes, this is madness, and so we have to do absolute moves (and
         # therefore we also do absolute resizes to stay consistent).
+        c = self.commands
         if context == Event.SPAWNED:
             # floating will trigger on_floated to do the actual alignment
-            self.i3.command(f"[con_id={self.con_id}] floating enable, border none")
+            self.send(c.float_)
             return
         ws = self.focused_ws if context == Event.KEYBIND else self.con_ws
         r = self.con_rect(Rect.from_i3ipc(ws.rect))
-        crit = f"[con_id={self.con_id}]"
-        resize = f"resize set {r.w}px {r.h}px"
-        move = f"move absolute position {r.x}px {r.y}px"
         if context == Event.KEYBIND:
-            fetch = f"move container to workspace {ws.name}"
-            cmd = f"{crit} {fetch}, {resize}, {move}, focus"
+            self.send(
+                c.fetch.format(ws.name),
+                c.resize_abs.format(r.w, r.h),
+                c.move_abs.format(r.x, r.y),
+                c.focus,
+            )
         else:
-            cmd = f"{crit} {resize}, {move}"
-        self._log.debug(cmd)
-        ret = self.i3.command(cmd)
-        self._log.debug("%s", [s or e for s, e in [(r.success, r.error) for r in ret]])
+            self.send(c.resize_abs.format(r.w, r.h), c.move_abs.format(r.x, r.y))
