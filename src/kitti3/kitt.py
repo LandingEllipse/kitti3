@@ -27,6 +27,8 @@ class Kitt:
         client: Client,
         client_argv: Optional[List[str]],
         anim: AnimParams,
+        loyal: bool,
+        crosstalk_delay: Optional[float],
     ):
         self.i3 = conn
         self.name = name
@@ -35,6 +37,8 @@ class Kitt:
         self.client = client
         self.client_argv = client_argv
         self.anim = anim
+        self.loyal = loyal
+        self.crosstalk_delay = crosstalk_delay
 
         self.log = logging.getLogger(self.__class__.__name__)
         self.debug = self.log.getEffectiveLevel() == logging.DEBUG
@@ -96,9 +100,9 @@ class Kitt:
             self.name,
             con.id,
         )
-        # if self.con_id is not None and self.loyal:
-        #     self.log.warning("loyal to %s, ignoring %s", self.con_id, con_id)
-        #     return
+        if self.con_id is not None and self.loyal:
+            self.log.warning("loyal to %s; ignoring %s", self.con_id, con.id)
+            return
         self.con_id = con.id
         if self.refresh():
             self.align_to_ws(Event.SPAWNED)
@@ -274,7 +278,6 @@ class Kitt:
 class Kitts(Kitt):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.sway_timing_compat = True  # TODO: add as arg
 
     def on_moved(self, _, we: i3ipc.WindowEvent) -> None:
         # Currently under Sway, if a container on an inactive workspace is moved, it
@@ -291,8 +294,8 @@ class Kitts(Kitt):
     def align_to_ws(self, trigger: Event) -> None:
         if trigger == Event.SPAWNED:
             return
-        if trigger == Event.FLOATED and self.sway_timing_compat:
-            time.sleep(0.02)
+        if trigger == Event.FLOATED and self.crosstalk_delay is not None:
+            time.sleep(self.crosstalk_delay)
         self.log.debug(trigger)
         r = self.con_rect()
         c = self.commands
