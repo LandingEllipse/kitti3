@@ -199,29 +199,29 @@ class Kitt:
         """Update the information on the presence of the associated client instance,
         its workspace and the focused workspace.
         """
-        tree = self.i3.get_tree()
-        if self.con_id is None or (
+        eager = self.con_id is None or (
             self.client.cattr == Cattr.CON_MARK and not self.loyal
-        ):
-            for con in tree:
-                if self._cattr_matches(con):
-                    self.con_id = con.id
-                    self.con_ws = con.workspace()
-                    self.con_rect = Rect.from_i3ipc(con.rect)
-                    break
-            else:
-                self.con_id = None
-                self.con_ws = None
-        else:
-            try:
-                self.con_ws = tree.find_by_id(self.con_id).workspace()
-            except AttributeError:
+        )
+        con = None
+        for candidate in self.i3.get_tree():
+            if (eager and self._cattr_matches(candidate)) or (
+                not eager and candidate.id == self.con_id
+            ):
+                con = candidate
+                break
+        if con is None:
+            _old_id = self.con_id
+            self.con_id = self.con_ws = self.con_rect = None
+            if not eager:
                 self.log.info(
-                    "con_id: %s has despawned; looking for an alternative", self.con_id
+                    "con_id: %s has despawned; looking for an alternative", _old_id
                 )
-                self.con_id = None
-                self.con_ws = None
                 return self.refresh()
+        else:
+            self.con_id = con.id
+            self.con_ws = con.workspace()
+            self.con_rect = Rect.from_i3ipc(con.rect)
+
         # WS refs from get_tree() are stubs with no focus info,
         # so have to perform a second query
         for ws in self.i3.get_workspaces():
