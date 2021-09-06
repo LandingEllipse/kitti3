@@ -76,10 +76,10 @@ class _ListClientsAction(argparse.Action):
 
     def __call__(self, parser, namespace, values, option_string=None):
         print("Kitti3 known clients")
-        for client, wms in CLIENTS.items():
+        for client, hosts in CLIENTS.items():
             print(f"\n{client}")
-            for wm, props in wms.items():
-                print(f"  {wm}")
+            for host, props in hosts.items():
+                print(f"  {host}")
                 for prop, val in props.items():
                     print(f"    {prop}: {val}")
         parser.exit()
@@ -116,7 +116,7 @@ def _num_in(type_: Type[T], min_: T, max_: T) -> Callable[[str], T]:
     return validator
 
 
-def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
+def _parse_args(argv: List[str], host: str, defaults: dict) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         add_help=False,
         description=(
@@ -207,6 +207,16 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
     )
 
     ag_id = ap.add_argument_group(title="identification")
+    _bs = ag_id.add_argument(
+        "-b",
+        "--bindsym",
+        help=(
+            f"KEYCOMBO (config format, default: disabled): (sway) let Kitti3"
+            f" dynamically set its own keyboard shortcut to KEYCOMBO"
+        ),
+        metavar="",
+    )
+
     _cl = ag_id.add_argument(
         "-c",
         "--client",
@@ -322,6 +332,11 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
                 " placeholder for NAME"
             )
             ap.error(str(argparse.ArgumentError(_cl, msg)))
+    if args.cmd in CLIENTS:
+        c = CLIENTS[args.cmd][host]
+        args.cmd = c["cmd"]
+        args.cattr = c["cattr"]
+    args.client = Client(args.cmd, args.cattr)
 
     args.anim_params = AnimParams(
         (args.animate and args.position.anchor is not None),
@@ -331,12 +346,27 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         args.anim_fps,
     )
 
+    # basic guardrails; otherwise very easy to override alnum keys if not escaping
+    if args.bindsym is not None and args.bindsym.startswith("+"):
+        msg = (
+            f"'{args.bindsym}' looks malformed - remember to escape $ on the"
+            f" commandline (e.g. '\\$mod{args.bindsym}')"
+        )
+        ap.error(str(argparse.ArgumentError(_bs, msg)))
+
     return args
 
 
 def cli() -> None:
+    # FIXME: half-baked way of checking what host we're running on.
+    conn = i3ipc.Connection()
+    host, _Kitt = {
+        True: ("sway", Kitts),
+        False: ("i3", Kitti3),
+    }["sway" in conn.socket_path]
+
     argv_kitti3, argv_client = _split_args(sys.argv[1:])
-    args = _parse_args(argv_kitti3, DEFAULTS)
+    args = _parse_args(argv_kitti3, host, DEFAULTS)
 
     if args.debug:
         logging.basicConfig(
@@ -348,24 +378,21 @@ def cli() -> None:
             ),
             level=logging.DEBUG,
         )
+    if args.bindsym is not None and host == "sway":
+        cmd = f'bindsym "{args.bindsym}" "nop {args.name}"'
+        ret = conn.command(cmd)[0]
+        logging.debug("%s -> %s", cmd, ret.success and "OK" or ret.error)
+        import atexit
 
-    # FIXME: half-baked way of checking what WM we're running on.
-    conn = i3ipc.Connection()
-    sway = "sway" in conn.socket_path  # or conn.get_version().major < 3
-    _Kitt = Kitts if sway else Kitti3
-
-    if args.cmd in CLIENTS:
-        c = CLIENTS[args.cmd]["sway" if sway else "i3"]
-        args.cmd = c["cmd"]
-        args.cattr = c["cattr"]
-    client = Client(args.cmd, args.cattr)
+        # crude but effective cleanup
+        atexit.register(lambda: conn.command(f"un{cmd}"))
 
     kitt = _Kitt(
         conn=conn,
         name=args.name,
         shape=args.shape,
         pos=args.position,
-        client=client,
+        client=args.client,
         client_argv=argv_client,
         anim=args.anim_params,
         loyal=args.loyal,
