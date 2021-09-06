@@ -19,7 +19,8 @@ DEFAULTS = {
     "name": "kitti3",
     "shape": (1.0, 0.4),
     "position": "RIGHT",
-    "anim_enter": 0.15,
+    "anim_show": 0.1,
+    "anim_hide": 0.1,
     "anim_fps": 60,
 }
 
@@ -160,16 +161,41 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         ),
         metavar="",
     )
-    # TODO: if implementing --anim-exit, use exclusive groups to enable --no-anim-*
-    ag_look.add_argument(
-        "--anim-enter",
+    _anim_show = ag_look.add_mutually_exclusive_group()
+    _anim_show.add_argument(
+        "--anim-show",
         type=_num_in(float, 0.01, 1),
         help=(
-            f"DURATION ([0.01, 1], default: {DEFAULTS['anim_enter']}):"
-            " duration of animated slide-in"
+            f"DURATION ([0.01, 1], default: {DEFAULTS['anim_show']}):"
+            " duration of animated slide-in. Disable with --no-anim-show"
         ),
         metavar="",
     )
+    _anim_show.add_argument(
+        "--no-anim-show",
+        action="store_const",
+        const=None,
+        dest="anim_show",
+        help=argparse.SUPPRESS,
+    )
+    _anim_hide = ag_look.add_mutually_exclusive_group()
+    _anim_hide.add_argument(
+        "--anim-hide",
+        type=_num_in(float, 0.01, 1),
+        help=(
+            f"DURATION ([0.01, 1], default: {DEFAULTS['anim_hide']}):"
+            " duration of animated slide-out. Disable with --no-anim-hide"
+        ),
+        metavar="",
+    )
+    _anim_hide.add_argument(
+        "--no-anim-hide",
+        action="store_const",
+        const=None,
+        dest="anim_hide",
+        help=argparse.SUPPRESS,
+    )
+
     ag_look.add_argument(
         "--anim-fps",
         type=_num_in(int, 1, 100),
@@ -236,7 +262,7 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
         help=(
             f"MS ([0.001, 0.2], default: {DEFAULTS['crosstalk_delay']} seconds): (sway)"
             " atomic transaction crosstalk mitigation. Experiment with this if"
-            " re-floated windows don't resize properly. Disable with completely"
+            " re-floated windows don't resize properly. Disable with"
             " --no-crosstalk-delay"
         ),
         metavar="",
@@ -298,7 +324,11 @@ def _parse_args(argv: List[str], defaults: dict) -> argparse.Namespace:
             ap.error(str(argparse.ArgumentError(_cl, msg)))
 
     args.anim_params = AnimParams(
-        args.animate, args.position.anchor, args.anim_enter, args.anim_fps
+        (args.animate and args.position.anchor is not None),
+        args.position.anchor,
+        args.anim_show,
+        args.anim_hide,
+        args.anim_fps,
     )
 
     return args
@@ -312,7 +342,7 @@ def cli() -> None:
         logging.basicConfig(
             datefmt="%Y-%m-%dT%H:%M:%S",
             format=(
-                "%(asctime)s.%(msecs)03dZ %(levelname)-7s"
+                "%(asctime)s.%(msecs)03d %(levelname)-7s"
                 " %(filename) 4s:%(lineno)03d"
                 " %(name)s.%(funcName)-12s %(message)s"
             ),

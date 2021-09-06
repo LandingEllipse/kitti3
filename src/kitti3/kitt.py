@@ -11,10 +11,11 @@ from .util import AnimParams, Client, Cattr, Loc, Pos, Rect, Shape, animate
 
 
 class Event(enum.Enum):
-    KEYBIND = enum.auto()
-    SPAWNED = enum.auto()
+    HIDE = enum.auto()
     FLOATED = enum.auto()
     MOVED = enum.auto()
+    SHOW = enum.auto()
+    SPAWNED = enum.auto()
 
 
 class Kitt:
@@ -85,9 +86,9 @@ class Kitt:
             if self.con_id is None:
                 self.spawn()
         elif self.con_ws.name == self.focused_ws.name:
-            self.send(self.commands.hide)
+            self.align_to_ws(Event.HIDE)
         else:
-            self.align_to_ws(Event.KEYBIND)
+            self.align_to_ws(Event.SHOW)
 
     def on_spawned(self, _, we: i3ipc.WindowEvent) -> None:
         """Bind to a client with a criterium attribute matching Kitti3's instance name."""
@@ -112,7 +113,7 @@ class Kitt:
         from tiled to floated.
         """
         con = we.container
-        # note: cf on_moved, for i3 con is our target, but .type == "floating_con" is 
+        # note: cf on_moved, for i3 con is our target, but .type == "floating_con" is
         # only set on the floating wrapper. Hence the need to check .floating.
         if (con.type != "floating_con" and con.floating != "user_on") or (
             # marks are unique; want to associate to new client if mark has moved...
@@ -206,6 +207,7 @@ class Kitt:
                 if self._cattr_matches(con):
                     self.con_id = con.id
                     self.con_ws = con.workspace()
+                    self.con_rect = Rect.from_i3ipc(con.rect)
                     break
             else:
                 self.con_id = None
@@ -244,7 +246,7 @@ class Kitt:
         return ok
 
     @functools.lru_cache()
-    def con_rect(self, abs_ref: Rect = None) -> Rect:
+    def target_rect(self, abs_ref: Rect = None) -> Rect:
         # relative/ppt
         if abs_ref is None:
             width = round(self.shape.x * 100)
@@ -305,42 +307,22 @@ class Kitts(Kitt):
     def spawn(self) -> None:
         if self.client.cmd is None:
             return
-        r = self.con_rect()
+        r = self.target_rect()
         c = self.commands
         self.send_rule(c.float_, c.resize.format(r.w, r.h), c.move.format(r.x, r.y))
         super().spawn()
 
-    def align_to_ws(self, trigger: Event) -> None:
-        if trigger == Event.SPAWNED:
+    def align_to_ws(self, event: Event) -> None:
+        if event == Event.SPAWNED:
             return
-        if trigger == Event.FLOATED and self.crosstalk_delay is not None:
+        if event == Event.FLOATED and self.crosstalk_delay is not None:
             time.sleep(self.crosstalk_delay)
-        self.log.debug(trigger)
-        r = self.con_rect()
+        self.log.debug(event)
+        r = self.target_rect()
         c = self.commands
-        if trigger == Event.KEYBIND:
-            if self.anim.enabled and self.anim.anchor is not None:
-                role_x, role_y, start, end = {
-                    Loc.LEFT: ("{}", r.y, 0 - r.w, r.x),
-                    Loc.RIGHT: ("{}", r.y, 100, r.x),
-                    Loc.TOP: (r.x, "{}", 0 - r.h, r.y),
-                    Loc.BOTTOM: (r.x, "{}", 100, r.y),
-                }[self.anim.anchor]
-                move_partial = c.move.format(role_x, role_y)
-
-                def move_cb(frame: int, pos: int) -> None:
-                    # ensure first frame move lands in same transaction as fetch
-                    if frame == 0:
-                        self.send(
-                            c.fetch.format(self.focused_ws.name),
-                            c.resize.format(r.w, r.h),
-                            move_partial.format(pos),
-                            c.focus,
-                        )
-                    else:
-                        self.send(move_partial.format(pos))
-
-                animate(move_cb, start, end, self.anim.enter_dur, self.anim.fps)
+        if event == Event.SHOW:
+            if self.anim.enabled and self.anim.show is not None:
+                self._animate()
             else:
                 self.send(
                     c.fetch.format(self.focused_ws.name),
@@ -348,29 +330,79 @@ class Kitts(Kitt):
                     c.move.format(r.x, r.y),
                     c.focus,
                 )
+        elif event == Event.HIDE:
+            if self.anim.enabled and self.anim.hide is not None and self._undisturbed():
+                self._animate(hide=True)
+            else:
+                self.send(self.commands.hide)
         else:
             self.send(c.resize.format(r.w, r.h), c.move.format(r.x, r.y))
 
+    def _animate(self, hide: bool = False) -> None:
+        r = self.target_rect()
+        c = self.commands
+        role_x, role_y, start, end = {
+            Loc.LEFT: ("{}", r.y, 0 - r.w, r.x),
+            Loc.RIGHT: ("{}", r.y, 100, r.x),
+            Loc.TOP: (r.x, "{}", 0 - r.h, r.y),
+            Loc.BOTTOM: (r.x, "{}", 100, r.y),
+        }[self.anim.anchor]
+        if hide:
+            start, end = end, start
+        move_partial = c.move.format(role_x, role_y)
+
+        def move_cb(pos: int, first: bool, last: bool) -> None:
+            # when entering, ensure first frame move lands in same transaction as fetch
+            if first and not hide:
+                self.send(
+                    c.fetch.format(self.focused_ws.name),
+                    c.resize.format(r.w, r.h),
+                    move_partial.format(pos),
+                    c.focus,
+                )
+            elif last and hide:
+                self.send(self.commands.hide)
+            else:
+                self.send(move_partial.format(pos))
+
+        duration = hide and self.anim.hide or self.anim.show  # type: ignore
+        animate(move_cb, start, end, duration, self.anim.fps, hide)
+
+    def _undisturbed(self) -> bool:
+        tr = self.target_rect()
+        cr = self.con_rect
+        wr = self.focused_ws.rect
+        # note: sway truncates when doing ppt->px conversion
+        # (see e.g. resize.c:resize_set_floating, struct movement_amount)
+        return False not in [
+            cr.x == int((tr.x / 100) * wr.width + wr.x),
+            cr.y == int((tr.y / 100) * wr.height + wr.y),
+            cr.w == int(wr.width * (tr.w / 100)),
+            cr.h == int(wr.height * (tr.h / 100)),
+        ]
+
 
 class Kitti3(Kitt):
-    def align_to_ws(self, context: Event) -> None:
+    def align_to_ws(self, event: Event) -> None:
         # Under i3, in multi-output configurations, a ppt move is considered relative
         # to the rect defined by the bounding box of all outputs, not by the con's
         # workspace. Yes, this is madness, and so we have to do absolute moves (and
         # therefore we also do absolute resizes to stay consistent).
         c = self.commands
-        if context == Event.SPAWNED:
+        if event == Event.SPAWNED:
             # floating will trigger on_floated to do the actual alignment
             self.send(c.float_)
             return
-        ws = self.focused_ws if context == Event.KEYBIND else self.con_ws
-        r = self.con_rect(Rect.from_i3ipc(ws.rect))
-        if context == Event.KEYBIND:
+        ws = self.focused_ws if event == Event.SHOW else self.con_ws
+        r = self.target_rect(Rect.from_i3ipc(ws.rect))
+        if event == Event.SHOW:
             self.send(
                 c.fetch.format(ws.name),
                 c.resize_abs.format(r.w, r.h),
                 c.move_abs.format(r.x, r.y),
                 c.focus,
             )
+        elif event == Event.HIDE:
+            self.send(self.commands.hide)
         else:
             self.send(c.resize_abs.format(r.w, r.h), c.move_abs.format(r.x, r.y))

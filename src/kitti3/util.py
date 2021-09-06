@@ -9,7 +9,8 @@ import i3ipc
 class AnimParams(NamedTuple):
     enabled: bool
     anchor: "Loc"
-    enter_dur: float
+    show: Optional[float]
+    hide: Optional[float]
     fps: int
 
 
@@ -144,30 +145,32 @@ class Shape(NamedTuple):
 
 
 def animate(
-    callback: Callable[[int, int], None],
+    callback: Callable[[int, bool, bool], None],
     start: int,
     end: int,
     duration: float,
     fps: int,
+    offset: bool,
 ):
     num_steps = round(duration * fps)
     if num_steps < 2:
-        callback(0, end)
+        callback(end, True, True)
         return
     step_size = (end - start) / (num_steps - 1)
-    linspaced = [round(start + step_size * i) for i in range(num_steps)]
+    linspaced = [round(start + step_size * (i + int(offset))) for i in range(num_steps)]
     steps = []
     for pos in linspaced:
         if pos not in steps:
             steps.append(pos)
     # compromise fps if duplicate positions removed, to ensure duration
     delay = duration / (len(steps) - 1)
+    final_frame = len(steps) - 1
     t_0 = t_curr = time.time()
     for frame, pos in enumerate(steps):
         t_target = t_0 + delay * frame
         while True:
             if t_curr >= t_target:
-                callback(frame, pos)
+                callback(pos, (frame == 0), (frame == final_frame))
                 break
             else:
                 # ok, as t_target approach prevents wakeup overhead from accumulating
