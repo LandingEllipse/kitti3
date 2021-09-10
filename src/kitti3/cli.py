@@ -85,6 +85,13 @@ class _ListClientsAction(argparse.Action):
         parser.exit()
 
 
+def _try_ipc(conn: i3ipc.Connection, cmd: str):
+    try:
+        conn.command(cmd)
+    except BrokenPipeError:
+        pass
+
+
 def _split_args(args: List[str]) -> Tuple[List, Optional[List]]:
     try:
         split = args.index("--")
@@ -384,8 +391,8 @@ def cli() -> None:
         logging.debug("%s -> %s", cmd, ret.success and "OK" or ret.error)
         import atexit
 
-        # crude but effective cleanup
-        atexit.register(lambda: conn.command(f"un{cmd}"))
+        # cleanup (only effective on user exit)
+        atexit.register(lambda: _try_ipc(conn, f"un{cmd}"))
 
     kitt = _Kitt(
         conn=conn,
