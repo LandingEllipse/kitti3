@@ -212,9 +212,9 @@ Found a bug? Feel like a feature is missing? Create an issue on GitHub!
 
 Want to get your hands dirty and contribute? Great! Clone the repository and dig in.
 
-The project follows a `setuptools` based structure and can be installed in 
+The project follows a `pyproject` based structure and can be installed in 
 development mode using pip (from the project root directory):
-    
+
     $ pip install -e .
 
 This exposes the `kitti3` entry point console script, which starts the Kitty manager.
